@@ -30,6 +30,7 @@
 #include <functional>
 #include <utility>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/types.h>
 
 #define LOG_TAG "JARVIS_NATIVE"
@@ -729,6 +730,41 @@ void speak_hindi_async(Engine& e, const std::string& text) {
 }
 
 
+uint64_t available_ram_bytes(Engine& e) {
+    JNIEnv* env = e.app->activity->env;
+    jobject activity = e.app->activity->clazz;
+    jclass activityClass = env->GetObjectClass(activity);
+    jmethodID getSystemService = env->GetMethodID(activityClass, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;");
+    jstring serviceName = env->NewStringUTF("activity");
+    jobject manager = env->CallObjectMethod(activity, getSystemService, serviceName);
+    if (env->ExceptionCheck()) clear_jni_exception(env);
+    uint64_t available = 0;
+    if (manager) {
+        jclass infoClass = env->FindClass("android/app/ActivityManager$MemoryInfo");
+        jmethodID constructor = infoClass ? env->GetMethodID(infoClass, "<init>", "()V") : nullptr;
+        jobject info = constructor ? env->NewObject(infoClass, constructor) : nullptr;
+        jclass managerClass = env->GetObjectClass(manager);
+        jmethodID getMemoryInfo = env->GetMethodID(managerClass, "getMemoryInfo", "(Landroid/app/ActivityManager$MemoryInfo;)V");
+        if (info && getMemoryInfo) env->CallVoidMethod(manager, getMemoryInfo, info);
+        if (env->ExceptionCheck()) clear_jni_exception(env);
+        jfieldID availMem = infoClass ? env->GetFieldID(infoClass, "availMem", "J") : nullptr;
+        if (info && availMem) available = static_cast<uint64_t>(env->GetLongField(info, availMem));
+        if (env->ExceptionCheck()) clear_jni_exception(env);
+        if (info) env->DeleteLocalRef(info);
+        if (managerClass) env->DeleteLocalRef(managerClass);
+        if (infoClass) env->DeleteLocalRef(infoClass);
+        env->DeleteLocalRef(manager);
+    }
+    env->DeleteLocalRef(serviceName);
+    env->DeleteLocalRef(activityClass);
+    return available;
+}
+
+uint64_t available_storage_bytes(const std::string& directory) {
+    struct statvfs space {};
+    if (statvfs(directory.c_str(), &space) != 0) return 0;
+    return static_cast<uint64_t>(space.f_bavail) * static_cast<uint64_t>(space.f_frsize);
+}
 std::string local_llm_model_path(Engine& e) {
     return std::string(e.app->activity->internalDataPath) + "/Qwen3-0.6B.Q4_K_M.gguf";
 }
@@ -902,6 +938,13 @@ bool download_model_file(Engine& e, const std::string& url, const std::string& p
 
 void start_offline_model_setup(Engine& e) {
     const std::string modelPath = local_llm_model_path(e);
+    const std::string appDataDirectory = e.app->activity->internalDataPath;
+    constexpr uint64_t requiredStorage = 550ULL * 1024ULL * 1024ULL;
+    if (available_storage_bytes(appDataDirectory) < requiredStorage) {
+        set_status(e, "NOT ENOUGH STORAGE - NEED ABOUT 550 MB FREE");
+        speak_hindi_async(e, "ऑफलाइन ए आई डाउनलोड करने के लिए कम से कम पाँच सौ पचास एमबी खाली स्टोरेज चाहिए।");
+        return;
+    }
     if (jarvis::offline_llm_model_exists(modelPath)) {
         e.localModelReady.store(true);
         set_status(e, "OFFLINE AI MODEL ALREADY INSTALLED");
@@ -946,6 +989,13 @@ void start_offline_llm_reply(Engine& e, const std::string& question) {
         e.llmProcessing.store(false);
         set_status(e, "TAP AI SETUP TO DOWNLOAD OFFLINE MODEL");
         speak_hindi_async(e, "ऑफलाइन ए आई मॉडल अभी डाउनलोड नहीं हुआ है। पहले नीचे ए आई सेटअप दबाएँ।");
+        return;
+    }
+    constexpr uint64_t minimumAvailableRam = 650ULL * 1024ULL * 1024ULL;
+    if (available_ram_bytes(e) < minimumAvailableRam) {
+        e.llmProcessing.store(false);
+        set_status(e, "LOW AVAILABLE RAM - CLOSE OTHER APPS");
+        speak_hindi_async(e, "ऑफलाइन ए आई चलाने के लिए उपलब्ध रैम कम है। कुछ ऐप बंद करके फिर कोशिश करें।");
         return;
     }
 
