@@ -22,6 +22,13 @@ int main() {
     assert(hindi == "प्रवीण कुमार");
     assert(jarvis::classify_command("कॉन्टैक्ट खोजो प्रवीण कुमार") == Command::OpenWhatsAppContact);
 
+    const std::string youtubeQuery = jarvis::extract_youtube_query("search youtube for Punjabi songs");
+    assert(youtubeQuery == "Punjabi songs");
+    assert(jarvis::classify_command("search youtube for Punjabi songs") == Command::SearchYouTube);
+
+    const std::string hindiYoutubeQuery = jarvis::extract_youtube_query("यूट्यूब पर खोजो पुराने हिंदी गाने");
+    assert(hindiYoutubeQuery == "पुराने हिंदी गाने");
+
     const std::string chat = jarvis::extract_contact_query("open chat with Sumit Kumar");
     assert(chat == "Sumit Kumar");
 
