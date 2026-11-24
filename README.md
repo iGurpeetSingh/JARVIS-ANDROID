@@ -1,40 +1,45 @@
 # JARVIS-ANDROID
 
-A personal Android voice-assistant project for Motorola and other Android devices.
+A native Android assistant project using **C++ for the command-processing core** and **Kotlin for Android framework integration and the Compose interface**.
 
-## Implemented in the current MVP
+## Language and architecture
 
-- Dark JARVIS-inspired Android dashboard built with Kotlin and Jetpack Compose.
-- Tap-to-talk speech recognition using Android SpeechRecognizer (Hindi locale requested; actual language support depends on the installed recognition service).
-- Spoken responses using Android TextToSpeech.
-- Basic commands for media volume up/down, opening YouTube and WhatsApp, and opening the phone dialer.
-- A Settings screen with AUTO / ONLINE / OFFLINE mode preference.
-- Network validation logic that can choose an online or offline route in AUTO mode.
-- GitHub Actions workflow that builds and uploads a debug APK artifact.
+- **C++17 (Android NDK + CMake):** native command classifier compiled as `libjarvis_native.so`.
+- **JNI:** Kotlin calls the native C++ command engine through `NativeCommandEngine`.
+- **Kotlin:** Android activity lifecycle, microphone permission, Android SpeechRecognizer/TextToSpeech integration, launching apps, dialer and volume controls.
+- **Jetpack Compose:** Android dashboard and settings UI.
 
-## Important limitations — not yet implemented
+## Implemented
 
-- No always-on Jarvis wake-word listener. The current microphone flow starts only after the user taps the microphone.
-- No foreground microphone service or lock-screen wake-word support.
-- No online AI provider is connected. An API key/provider integration is not included.
-- No offline LLM runtime or downloadable model is bundled. The OFFLINE setting is currently a saved preference, not a working local AI model.
-- AUTO mode currently has network-routing logic only; it does not yet call an online provider or local model.
-- WhatsApp automation currently opens WhatsApp only. It does not search contacts or send messages.
-- YouTube command currently opens YouTube; voice-driven search is not yet implemented.
-- No Motorola physical-device QA has been completed.
+- Dark JARVIS-inspired dashboard with tap-to-talk microphone control.
+- Hindi locale requested from Android SpeechRecognizer; recognition quality and language support depend on the device's speech service.
+- Hindi TextToSpeech attempt with English fallback.
+- Native C++ command classification for volume up/down, opening WhatsApp, opening YouTube and opening the dialer.
+- Kotlin executes the selected Android system action after C++ returns a command ID.
+- AUTO / ONLINE / OFFLINE preference screen and basic validated-network detection/routing helper.
+- GitHub Actions installs Android NDK and CMake, builds the native library and packages a debug APK.
+
+## Not yet implemented
+
+- Always-on wake word and background listening service.
+- Native C++ audio capture, acoustic feature extraction, wake-word model or offline speech recognition.
+- Local/offline LLM runtime and model download/management.
+- Online AI provider connection. No API key or paid provider is bundled.
+- AUTO mode does not yet execute an online provider or local LLM; current routing is only a foundation.
+- WhatsApp accessibility automation, contact disambiguation, chat opening and message sending. Currently JARVIS only launches WhatsApp.
+- YouTube voice search and physical Motorola device QA.
 
 ## Build
 
-GitHub Actions runs gradle --no-daemon :app:assembleDebug and uploads app/build/outputs/apk/debug/app-debug.apk as an artifact.
+GitHub Actions runs `gradle --no-daemon :app:assembleDebug` with Android NDK `27.2.12479018` and CMake `3.22.1`, then uploads `app/build/outputs/apk/debug/app-debug.apk` as the `jarvis-android-debug-apk` artifact.
 
-Open the Actions tab, select the latest successful Android CI run, and download the jarvis-android-debug-apk artifact. The artifact is a debug build for testing, not a signed production release.
+Open the **Actions** tab, choose the latest successful **Android CI** run, and download the artifact. It is a debug APK, not a signed production release.
 
-## Roadmap
+## Next engineering milestones
 
-1. Complete build and resolve compile/runtime issues.
-2. Validate microphone, Hindi speech recognition and TTS on a Motorola device.
-3. Add a supported on-device keyword-spotting model and compliant foreground-service flow.
-4. Integrate an offline speech/LLM runtime and downloadable model management.
-5. Add an online AI provider adapter with user-supplied key and no paid usage without consent.
-6. Implement safe, permission-aware WhatsApp and YouTube workflows.
-7. Add tests, crash handling, privacy disclosures and release signing.
+1. Stabilize the JNI/C++ build and test command classification on-device.
+2. Implement C++ audio input processing and integrate a real wake-word model.
+3. Add offline ASR and an on-device LLM runtime with model-size/device compatibility checks.
+4. Add an online provider adapter with user-supplied credentials and explicit consent for any paid usage.
+5. Implement safe Android Accessibility workflows for WhatsApp and YouTube with clear user confirmation before sending messages.
+6. Add automated tests, crash handling, privacy disclosures and release signing.
