@@ -29,6 +29,19 @@ int main() {
     const std::string hindiYoutubeQuery = jarvis::extract_youtube_query("यूट्यूब पर खोजो पुराने हिंदी गाने");
     assert(hindiYoutubeQuery == "पुराने हिंदी गाने");
 
+    const std::string requestedContact = jarvis::extract_contact_query("send message to Nofil saying I am on my way");
+    const std::string requestedMessage = jarvis::extract_contact_message("send message to Nofil saying I am on my way");
+    assert(requestedContact == "Nofil");
+    assert(requestedMessage == "I am on my way");
+
+    const std::string hindiContact = jarvis::extract_contact_query("Nofil ko WhatsApp par message bhejo, kehna main aa raha hoon");
+    const std::string hindiMessage = jarvis::extract_contact_message("Nofil ko WhatsApp par message bhejo, kehna main aa raha hoon");
+    assert(hindiContact == "Nofil");
+    assert(hindiMessage == "main aa raha hoon");
+
+    assert(jarvis::classify_command("haan") == Command::ConfirmPendingAction);
+    assert(jarvis::classify_command("नहीं") == Command::CancelPendingAction);
+
     const std::string chat = jarvis::extract_contact_query("open chat with Sumit Kumar");
     assert(chat == "Sumit Kumar");
 
