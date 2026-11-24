@@ -426,6 +426,24 @@ bool copy_asset_to_file(AAssetManager* manager, const char* assetName,
     return count == 0;
 }
 
+bool copy_asset_tree(AAssetManager* manager, const std::string& assetPath,
+                     const std::string& outputPath) {
+    if (copy_asset_to_file(manager, assetPath.c_str(), outputPath)) return true;
+
+    AAssetDir* directory = AAssetManager_openDir(manager, assetPath.c_str());
+    if (!directory) return false;
+    mkdir(outputPath.c_str(), 0700);
+
+    bool ok = true;
+    const char* name = nullptr;
+    while ((name = AAssetDir_getNextFileName(directory)) != nullptr) {
+        const std::string childAsset = assetPath + "/" + name;
+        const std::string childOutput = outputPath + "/" + name;
+        if (!copy_asset_tree(manager, childAsset, childOutput)) ok = false;
+    }
+    AAssetDir_close(directory);
+    return ok;
+}
 void run_wake_word_engine(Engine& e) {
     const std::string modelDir = std::string(e.app->activity->internalDataPath) + "/jarvis-kws";
     mkdir(modelDir.c_str(), 0700);
@@ -587,34 +605,20 @@ void speak_hindi_async(Engine& e, const std::string& text) {
                                "jarvis-tts/model.int8.onnx", modelPath) &&
             copy_asset_to_file(e.app->activity->assetManager,
                                "jarvis-tts/tokens.txt", tokensPath) &&
-            copy_asset_to_file(e.app->activity->assetManager,
-                               "espeak-ng-data/phontab",
-                               espeakPhontab);
+            copy_asset_tree(e.app->activity->assetManager,
+                            "espeak-ng-data", espeakDir);
 
         if (!ready) {
             set_status(e, "HINDI VOICE ASSETS NOT READY");
             e.speaking.store(false);
+            e.restartWake.store(true);
             return;
-        }
-
-        // espeak-ng uses a complete data directory; copy remaining phoneme
-        // tables and dictionaries once into the app-private folder.
-        AAssetDir* assetDir = AAssetManager_openDir(
-            e.app->activity->assetManager, "espeak-ng-data");
-        if (assetDir) {
-            const char* name = nullptr;
-            while ((name = AAssetDir_getNextFileName(assetDir)) != nullptr) {
-                const std::string assetName = std::string("espeak-ng-data/") + name;
-                const std::string outputPath = espeakDir + "/" + name;
-                copy_asset_to_file(e.app->activity->assetManager,
-                                   assetName.c_str(), outputPath);
-            }
-            AAssetDir_close(assetDir);
         }
 
         if (piper_phonemize::cxx::Initialize(espeakDir) < 0) {
             set_status(e, "HINDI PHONEMIZER INITIALIZATION FAILED");
             e.speaking.store(false);
+            e.restartWake.store(true);
             return;
         }
 
@@ -634,6 +638,7 @@ void speak_hindi_async(Engine& e, const std::string& text) {
             if (!model.Get()) {
                 set_status(e, "HINDI VOICE MODEL FAILED TO LOAD");
                 e.speaking.store(false);
+                e.restartWake.store(true);
                 return;
             }
             e.hindiTts = std::make_unique<sherpa_onnx::cxx::OfflineTts>(std::move(model));
@@ -644,6 +649,7 @@ void speak_hindi_async(Engine& e, const std::string& text) {
         if (phonemes.sentences.empty()) {
             set_status(e, "HINDI TEXT PHONEMIZATION FAILED");
             e.speaking.store(false);
+            e.restartWake.store(true);
             return;
         }
 
