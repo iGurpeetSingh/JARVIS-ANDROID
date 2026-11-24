@@ -22,6 +22,24 @@ bool contains_any(const std::string& text,
     }
     return false;
 }
+
+bool equals_any(const std::string& text,
+                const std::initializer_list<const char*>& phrases) {
+    for (const char* phrase : phrases) {
+        if (text == phrase) return true;
+    }
+    return false;
+}
+
+std::string trim_command_edges(std::string value) {
+    const auto isEdge = [](unsigned char ch) {
+        return std::isspace(ch) || ch == '.' || ch == '!' || ch == '?' ||
+               ch == ',' || ch == ';' || ch == ':' || ch == '"' || ch == '\'';
+    };
+    while (!value.empty() && isEdge(static_cast<unsigned char>(value.front()))) value.erase(value.begin());
+    while (!value.empty() && isEdge(static_cast<unsigned char>(value.back()))) value.pop_back();
+    return value;
+}
 }
 
 
@@ -138,8 +156,6 @@ Command classify_command(const std::string& raw) {
     const std::string text = lower_ascii(raw);
     if (!extract_contact_query(raw).empty()) return Command::OpenWhatsAppContact;
     if (!extract_youtube_query(raw).empty()) return Command::SearchYouTube;
-    if (contains_any(text, {"yes", "haan", "han", "confirm", "send it", "haan bhejo", "han bhejo", "हाँ", "हां", "हाँ भेजो", "हां भेजो", "ठीक है भेजो"})) return Command::ConfirmPendingAction;
-    if (contains_any(text, {"no", "nahi", "nahin", "cancel", "mat bhejo", "मत भेजो", "नहीं", "नही", "नहीं भेजना", "रद्द करो"})) return Command::CancelPendingAction;
 
     if (contains_any(text, {"volume up", "increase volume", "turn up volume", "volume badhao",
                             "awaz badhao", "आवाज बढ़", "वॉल्यूम बढ़", "आवाज़ बढ़",
@@ -161,6 +177,22 @@ Command classify_command(const std::string& raw) {
     if (contains_any(text, {"call", "कॉल", "फोन लगाओ", "डायलर खोल", "phone kholo",
                             "open dialer", "dialer kholo"})) {
         return Command::OpenDialer;
+    }
+    return Command::Unknown;
+}
+
+Command classify_confirmation(const std::string& raw) {
+    const std::string text = lower_ascii(trim_command_edges(raw));
+    if (equals_any(text, {"yes", "yes send", "confirm", "send it", "haan", "han",
+                          "haan bhejo", "han bhejo", "theek hai", "thik hai",
+                          "हाँ", "हां", "हाँ भेजो", "हां भेजो", "ठीक है", "ठीक है भेजो",
+                          "जी", "जी हाँ", "जी हां"})) {
+        return Command::ConfirmPendingAction;
+    }
+    if (equals_any(text, {"no", "no cancel", "cancel", "do not send", "dont send",
+                          "nahi", "nahin", "mat bhejo", "nahi bhejna",
+                          "नहीं", "नही", "नहीं भेजो", "मत भेजो", "नहीं भेजना", "रद्द करो"})) {
+        return Command::CancelPendingAction;
     }
     return Command::Unknown;
 }
