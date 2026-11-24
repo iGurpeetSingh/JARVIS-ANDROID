@@ -36,8 +36,34 @@ std::string trim_command_edges(std::string value) {
         return std::isspace(ch) || ch == '.' || ch == '!' || ch == '?' ||
                ch == ',' || ch == ';' || ch == ':' || ch == '"' || ch == '\'';
     };
-    while (!value.empty() && isEdge(static_cast<unsigned char>(value.front()))) value.erase(value.begin());
-    while (!value.empty() && isEdge(static_cast<unsigned char>(value.back()))) value.pop_back();
+    const auto trimDevanagariDanda = [](std::string& text) {
+        bool changed = false;
+        for (const char* mark : {"\xE0\xA5\xA4", "\xE0\xA5\xA5"}) {
+            const std::string punctuation(mark, 3);
+            if (text.size() >= punctuation.size() &&
+                text.compare(text.size() - punctuation.size(), punctuation.size(), punctuation) == 0) {
+                text.resize(text.size() - punctuation.size());
+                changed = true;
+            }
+            if (text.rfind(punctuation, 0) == 0) {
+                text.erase(0, punctuation.size());
+                changed = true;
+            }
+        }
+        return changed;
+    };
+    bool changed = true;
+    while (changed) {
+        changed = trimDevanagariDanda(value);
+        while (!value.empty() && isEdge(static_cast<unsigned char>(value.front()))) {
+            value.erase(value.begin());
+            changed = true;
+        }
+        while (!value.empty() && isEdge(static_cast<unsigned char>(value.back()))) {
+            value.pop_back();
+            changed = true;
+        }
+    }
     return value;
 }
 }
