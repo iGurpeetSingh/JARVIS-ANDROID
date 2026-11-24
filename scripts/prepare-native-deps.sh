@@ -127,14 +127,16 @@ tar -xjf "$TMP_DIR/hindi-tts.tar.bz2" -C "$TMP_DIR/hindi-tts"
 
 HINDI_TTS_MODEL="$(find "$TMP_DIR/hindi-tts" -type f -name 'hi_IN-rohan-medium.onnx' -print -quit)"
 HINDI_TTS_TOKENS="$(find "$TMP_DIR/hindi-tts" -type f -name 'tokens.txt' -print -quit)"
-if [[ -z "$HINDI_TTS_MODEL" || -z "$HINDI_TTS_TOKENS" ]]; then
+HINDI_TTS_METADATA="$(find "$TMP_DIR/hindi-tts" -type f -name 'hi_IN-rohan-medium.onnx.json' -print -quit)"
+if [[ -z "$HINDI_TTS_MODEL" || -z "$HINDI_TTS_TOKENS" || -z "$HINDI_TTS_METADATA" ]]; then
   echo "Hindi Piper TTS package did not contain the expected model and tokens."
   find "$TMP_DIR/hindi-tts" -type f | head -100
   exit 1
 fi
 mkdir -p "$ROOT/app/src/main/assets/jarvis-tts"
-cp "$HINDI_TTS_MODEL" "$ROOT/app/src/main/assets/jarvis-tts/model.int8.onnx"
+cp "$HINDI_TTS_MODEL" "$ROOT/app/src/main/assets/jarvis-tts/model.onnx"
 cp "$HINDI_TTS_TOKENS" "$ROOT/app/src/main/assets/jarvis-tts/tokens.txt"
+cp "$HINDI_TTS_METADATA" "$ROOT/app/src/main/assets/jarvis-tts/model.onnx.json"
 
 echo "[JARVIS] Reusing bundled espeak-ng phoneme data from the Hindi voice archive"
 ESPEAK_PHONTAB="$(find "$TMP_DIR/hindi-tts" -type f -path '*/espeak-ng-data/phontab' -print -quit)"
