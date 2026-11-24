@@ -53,6 +53,7 @@ import java.util.Locale
 
 class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var speechRecognizer: SpeechRecognizer? = null
+    private val nativeCommandEngine by lazy { NativeCommandEngine() }
     private var tts: TextToSpeech? = null
     private var listening by mutableStateOf(false)
     private var heardText by mutableStateOf("Tap the microphone and say a command.")
@@ -151,29 +152,30 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun handleCommand(raw: String) {
-        val command = raw.lowercase(Locale.ROOT)
-        when {
-            "volume up" in command || "आवाज बढ़" in command || "वॉल्यूम बढ़" in command -> {
+        // Intent classification is performed in the native C++ library through JNI.
+        // Kotlin executes Android framework actions after receiving the native command ID.
+        when (nativeCommandEngine.classifyCommand(raw)) {
+            NativeCommandEngine.VOLUME_UP -> {
                 adjustVolume(true)
                 respond("वॉल्यूम बढ़ा दिया है।")
             }
-            "volume down" in command || "आवाज कम" in command || "वॉल्यूम कम" in command -> {
+            NativeCommandEngine.VOLUME_DOWN -> {
                 adjustVolume(false)
                 respond("वॉल्यूम कम कर दिया है।")
             }
-            "youtube" in command || "यूट्यूब" in command -> {
+            NativeCommandEngine.OPEN_YOUTUBE -> {
                 openApp("com.google.android.youtube", "https://www.youtube.com", "YouTube")
             }
-            "whatsapp" in command || "व्हाट्सएप" in command -> {
+            NativeCommandEngine.OPEN_WHATSAPP -> {
                 openApp("com.whatsapp", "https://www.whatsapp.com", "WhatsApp")
             }
-            "call" in command || "कॉल" in command || "फोन लगाओ" in command -> {
+            NativeCommandEngine.OPEN_DIALER -> {
                 runCatching {
                     startActivity(Intent(Intent.ACTION_DIAL))
                     respond("डायलर खोल दिया है। कॉल करने से पहले नंबर जाँच लें।")
                 }.onFailure { respond("डायलर नहीं खुल पाया।") }
             }
-            else -> respond("मैंने आपका आदेश सुना है, लेकिन यह सुविधा अभी इस MVP में उपलब्ध नहीं है।")
+            else -> respond("मैंने आपका आदेश सुना है, लेकिन यह सुविधा अभी उपलब्ध नहीं है।")
         }
     }
 
