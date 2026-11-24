@@ -31,7 +31,7 @@ bool load_model_locked(const std::string& modelPath, std::string* error) {
     g_vocab = llama_model_get_vocab(g_model);
     llama_context_params contextParams = llama_context_default_params();
     contextParams.n_ctx = 1536;
-    contextParams.n_batch = 512;
+    contextParams.n_batch = 1024;
     contextParams.n_ubatch = 256;
     contextParams.n_threads = 3;
     contextParams.n_threads_batch = 3;
@@ -67,11 +67,11 @@ std::string offline_llm_generate(const std::string& modelPath,
     if (!load_model_locked(modelPath, error)) return {};
 
     std::string safeQuestion = userText;
-    if (safeQuestion.size() > 2400) safeQuestion.resize(2400);
+    if (safeQuestion.size() > 1200) safeQuestion.resize(1200);
 
     const std::string prompt =
         "<|im_start|>system\n"
-        "You are JARVIS, a concise helpful personal assistant. "
+        "You are JARVIS, a concise helpful personal assistant. Do not reveal internal reasoning. "
         "Answer in natural Hindi. Understand Hindi and Hinglish. "
         "Do not claim you performed actions unless the app confirms them. "
         "Keep spoken answers short and practical.<|im_end|>\n"
@@ -81,7 +81,7 @@ std::string offline_llm_generate(const std::string& modelPath,
     const int32_t required = llama_tokenize(
         g_vocab, prompt.c_str(), static_cast<int32_t>(prompt.size()),
         nullptr, 0, true, true);
-    if (required == INT32_MIN || required >= 1536) {
+    if (required == INT32_MIN || required >= 1200) {
         if (error) *error = "The spoken question is too long for the local model context.";
         return {};
     }
