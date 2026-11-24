@@ -25,6 +25,7 @@ bool contains_any(const std::string& text,
 }
 
 
+namespace jarvis {
 std::string extract_contact_query(const std::string& raw) {
     const std::string text = lower_ascii(raw);
     const std::initializer_list<const char*> markers = {
@@ -80,7 +81,6 @@ std::string extract_contact_query(const std::string& raw) {
     return candidate;
 }
 
-namespace jarvis {
 Command classify_command(const std::string& raw) {
     const std::string text = lower_ascii(raw);
     if (!extract_contact_query(raw).empty()) return Command::OpenWhatsAppContact;
