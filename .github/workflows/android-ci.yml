@@ -37,6 +37,15 @@ jobs:
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "ndk;27.2.12479018" "cmake;3.22.1"
 
+      - name: Run native C++ command engine tests
+        shell: bash
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -I app/src/main/cpp \
+            app/src/main/cpp/native-lib.cpp tests/command_engine_test.cpp \
+            -o "$RUNNER_TEMP/jarvis-command-tests"
+          "$RUNNER_TEMP/jarvis-command-tests"
+
       - name: Prepare native C++ ASR dependencies
         run: bash scripts/prepare-native-deps.sh
 
