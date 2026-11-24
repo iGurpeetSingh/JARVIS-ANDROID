@@ -239,7 +239,7 @@ private fun JarvisScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text("JARVIS", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                    Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color(0xFF48D9FF))
+                    Button(onClick = { startActivity(Intent(this, SettingsActivity::class.java)) }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF123B5C))) { Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White); Text("Settings") }
                 }
                 Text("PERSONAL AI ASSISTANT", color = Color(0xFF72BFEA), fontSize = 11.sp, letterSpacing = 2.sp)
                 Spacer(modifier = Modifier.size(12.dp))
