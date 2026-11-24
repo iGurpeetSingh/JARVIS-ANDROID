@@ -1,50 +1,68 @@
-# JARVIS-ANDROID — Native C++ Android App
+# JARVIS-ANDROID — Native C++ Android Assistant
 
-The application layer is being migrated to a **native C++17 Android application**. Kotlin source, Kotlin Gradle plugin, Jetpack Compose and AndroidX Compose dependencies have been removed from the app.
+The Android application code is **native C++17**. Kotlin source files, Java Activity source files, Kotlin Gradle plugins, Kotlin DSL Gradle files, Jetpack Compose and AndroidX Compose dependencies have been removed.
 
-## Current native architecture
+## Native application architecture
 
-- **C++17 + Android NDK + CMake:** application entry point, interface rendering, command classification and native microphone capture.
-- **Android NativeActivity + NDK native_app_glue:** Android lifecycle and input integration without an app-authored Kotlin or Java Activity.
+- **C++17 + Android NDK + CMake:** application entry point, command recognition, audio capture, ASR inference and system-action orchestration.
+- **Android NativeActivity + NDK native_app_glue:** lifecycle and input integration without an app-authored Kotlin/Java Activity.
 - **OpenGL ES 2.0:** native C++ dashboard rendering.
-- **AAudio:** native microphone PCM input capture.
-- **JNI calls from C++:** invoke required Android framework services such as microphone permission and launching installed Android apps / media volume controls.
-- **Groovy Gradle files:** build configuration only. Gradle is still required to package an Android APK; it is not Kotlin application code.
+- **AAudio:** 16 kHz mono PCM microphone capture.
+- **Sherpa-ONNX C++ API 2.0.3 + ONNX Runtime:** on-device offline Whisper ASR.
+- **Whisper Tiny multilingual int8 model:** offline speech-to-text model packaged in the APK. Hindi and other multilingual recognition is requested using Whisper's automatic language detection.
+- **JNI calls from C++:** invoke Android platform APIs for runtime permission, launching apps and media-volume control.
+- **Groovy Gradle files:** Android packaging/build configuration only; no Kotlin application source or Kotlin plugin remains.
 
-## Included in this migration
+## Implemented and build-verified
 
-- C++ NativeActivity launcher and OpenGL dashboard.
-- C++ microphone input capture using AAudio after runtime permission is granted.
-- C++ buttons to launch installed WhatsApp and YouTube apps.
-- C++ Android AudioManager bridge for media volume adjustment.
-- C++ command classifier source for Hindi/English command phrases.
-- CI check that fails if Kotlin/Java app source or Kotlin/Compose Gradle dependencies are reintroduced.
+- Native C++ NativeActivity launcher.
+- Native OpenGL dashboard and microphone/WhatsApp/YouTube touch controls.
+- Native AAudio microphone capture at 16 kHz mono PCM.
+- Offline Whisper Tiny multilingual speech-to-text from captured audio.
+- Native C++ command classification for volume up/down, opening WhatsApp, opening YouTube and dialer intent recognition.
+- Native Android platform calls for opening WhatsApp/YouTube and media volume control.
+- Kotlin-free CI source check.
+- Debug APK built and uploaded using GitHub Actions.
+
+## How voice input currently works
+
+1. Tap the central microphone control to start recording.
+2. Speak a short Hindi, English or mixed-language command.
+3. Tap the microphone again to stop recording.
+4. The app runs Whisper Tiny locally, without sending microphone audio to a remote speech service.
+5. The recognized text is passed to the native C++ command classifier. Recognized supported commands execute their Android action.
+
+The current input is **tap-to-record and tap-to-transcribe**. It is not an always-on wake-word listener yet. The offline model and Sherpa-ONNX runtime are packaged with the arm64-v8a debug APK; first use copies model assets to the app-private files directory.
 
 ## Not yet complete
 
-- Microphone capture is implemented, but speech-to-text (ASR) is **not yet connected**. The mic button currently starts/stops audio capture; it does not transcribe speech or execute spoken commands yet.
-- The C++ command classifier is implemented but still needs to be connected to an ASR transcript pipeline.
-- No always-on wake-word model or background listening service yet.
-- No offline LLM runtime or model manager yet.
-- No online AI provider yet.
-- WhatsApp contact lookup, ambiguity handling and message sending are not yet implemented.
-- No Motorola physical-device verification has been performed.
-- The present UI is a basic native OpenGL dashboard, not a final visual recreation of the earlier Compose dashboard.
+- Always-on "Jarvis" wake-word detection and background foreground-service operation.
+- Voice activity detection / automatic end-of-utterance detection; the user currently taps again to stop recording.
+- Hindi/English spoken response (TTS) using a bundled native voice.
+- Online AI provider connection and user-configured credentials.
+- Offline LLM conversation runtime.
+- WhatsApp contact lookup by name, resolving similar contacts, opening the chosen chat and user-confirmed message sending. Current feature only launches WhatsApp.
+- YouTube voice search.
+- Motorola physical-device testing, battery/performance profiling and production signing.
 
 ## Build
 
-GitHub Actions installs Android NDK `27.2.12479018` and CMake `3.22.1`, verifies the app has no Kotlin/Java sources or Kotlin/Compose Gradle dependencies, builds with:
+Run `bash scripts/prepare-native-deps.sh` before the Android build. The script downloads the pinned Sherpa-ONNX Android native libraries and the multilingual Whisper Tiny model, validates the Sherpa runtime archive checksum, and places native libraries/headers/model assets in generated build input directories.
+
+Then run:
 
 `gradle --no-daemon :app:assembleDebug`
 
-The workflow uploads `app/build/outputs/apk/debug/app-debug.apk` as `jarvis-android-debug-apk`. This is a debug APK, not a signed production release.
+The build targets `arm64-v8a` for current Motorola/64-bit Android devices. GitHub Actions runs the dependency preparation, verifies that no Kotlin/Java app sources or Kotlin/Compose Gradle dependencies exist, builds the APK and uploads `jarvis-android-debug-apk`.
 
-## Next native C++ milestones
+The debug APK is a test build, not a signed production release.
 
-1. Verify the NativeActivity APK build and resolve compiler or linker errors.
-2. Add native audio buffering, voice activity detection and ASR integration.
-3. Connect C++ transcript classification to native app actions.
-4. Integrate an offline wake-word engine and offline LLM/runtime.
+## Native C++ next milestones
+
+1. Add open-vocabulary "Jarvis" wake-word detection to the live microphone audio stream.
+2. Add VAD and hands-free command capture after the wake word.
+3. Add native Hindi/English speech synthesis.
+4. Add offline LLM runtime and a model-size/device compatibility profile.
 5. Add optional online AI through a user-configured provider.
-6. Implement permission-aware WhatsApp Accessibility automation and user-confirmed message sending.
-7. Test on the target Motorola device and prepare a signed release.
+6. Implement safe, permission-aware WhatsApp contact workflows and test on the Motorola device.
+7. Add automated tests, crash recovery, battery profiling, privacy disclosures and release signing.
