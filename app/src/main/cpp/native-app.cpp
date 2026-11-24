@@ -329,6 +329,37 @@ void request_audio_permission(Engine& e) {
     env->DeleteLocalRef(cls);
 }
 
+
+bool has_contacts_permission(Engine& e) {
+    JNIEnv* env = e.app->activity->env;
+    jobject activity = e.app->activity->clazz;
+    jclass cls = env->GetObjectClass(activity);
+    jmethodID check = env->GetMethodID(cls, "checkSelfPermission", "(Ljava/lang/String;)I");
+    jstring permission = env->NewStringUTF("android.permission.READ_CONTACTS");
+    jint result = env->CallIntMethod(activity, check, permission);
+    clear_jni_exception(env);
+    env->DeleteLocalRef(permission);
+    env->DeleteLocalRef(cls);
+    return result == 0;
+}
+
+void request_contacts_permission(Engine& e) {
+    JNIEnv* env = e.app->activity->env;
+    jobject activity = e.app->activity->clazz;
+    jclass cls = env->GetObjectClass(activity);
+    jclass stringClass = env->FindClass("java/lang/String");
+    jobjectArray permissions = env->NewObjectArray(1, stringClass, nullptr);
+    jstring permission = env->NewStringUTF("android.permission.READ_CONTACTS");
+    env->SetObjectArrayElement(permissions, 0, permission);
+    jmethodID request = env->GetMethodID(cls, "requestPermissions", "([Ljava/lang/String;I)V");
+    env->CallVoidMethod(activity, request, permissions, 602);
+    clear_jni_exception(env);
+    env->DeleteLocalRef(permission);
+    env->DeleteLocalRef(permissions);
+    env->DeleteLocalRef(stringClass);
+    env->DeleteLocalRef(cls);
+}
+
 aaudio_data_callback_result_t audio_callback(AAudioStream*, void* userData,
                                               void* audioData, int32_t numFrames) {
     auto* e = static_cast<Engine*>(userData);
