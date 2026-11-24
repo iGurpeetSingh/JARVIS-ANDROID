@@ -732,7 +732,71 @@ std::string local_llm_model_path(Engine& e) {
     return std::string(e.app->activity->internalDataPath) + "/Qwen3-0.6B.Q4_K_M.gguf";
 }
 
-bool download_model_file(Engine& e, const std::string& url, const std::string& path) {
+bool verify_model_sha256(JNIEnv* env, const std::string& path, const std::string& expected) {
+    jclass digestClass = env->FindClass("java/security/MessageDigest");
+    if (!digestClass) { clear_jni_exception(env); return false; }
+    jmethodID getInstance = env->GetStaticMethodID(digestClass, "getInstance", "(Ljava/lang/String;)Ljava/security/MessageDigest;");
+    jstring algorithm = env->NewStringUTF("SHA-256");
+    jobject digest = getInstance ? env->CallStaticObjectMethod(digestClass, getInstance, algorithm) : nullptr;
+    if (env->ExceptionCheck()) clear_jni_exception(env);
+
+    jclass inputClass = env->FindClass("java/io/FileInputStream");
+    jmethodID inputCtor = inputClass ? env->GetMethodID(inputClass, "<init>", "(Ljava/lang/String;)V") : nullptr;
+    jstring pathText = env->NewStringUTF(path.c_str());
+    jobject input = (inputCtor && pathText) ? env->NewObject(inputClass, inputCtor, pathText) : nullptr;
+    if (env->ExceptionCheck()) { clear_jni_exception(env); if (input) { env->DeleteLocalRef(input); input = nullptr; } }
+
+    bool ok = digest && input;
+    if (ok) {
+        jclass streamClass = env->GetObjectClass(input);
+        jmethodID read = env->GetMethodID(streamClass, "read", "([BII)I");
+        jmethodID close = env->GetMethodID(streamClass, "close", "()V");
+        jmethodID update = env->GetMethodID(digestClass, "update", "([BII)V");
+        jmethodID finish = env->GetMethodID(digestClass, "digest", "()[B");
+        jbyteArray buffer = env->NewByteArray(65536);
+        while (ok && buffer) {
+            const jint count = env->CallIntMethod(input, read, buffer, 0, 65536);
+            if (env->ExceptionCheck()) { clear_jni_exception(env); ok = false; break; }
+            if (count < 0) break;
+            if (count == 0) continue;
+            env->CallVoidMethod(digest, update, buffer, 0, count);
+            if (env->ExceptionCheck()) { clear_jni_exception(env); ok = false; }
+        }
+        jbyteArray hash = ok && finish ? static_cast<jbyteArray>(env->CallObjectMethod(digest, finish)) : nullptr;
+        if (env->ExceptionCheck()) { clear_jni_exception(env); ok = false; }
+        std::string actual;
+        if (hash) {
+            const jsize length = env->GetArrayLength(hash);
+            std::vector<jbyte> bytes(static_cast<size_t>(length));
+            env->GetByteArrayRegion(hash, 0, length, bytes.data());
+            if (env->ExceptionCheck()) { clear_jni_exception(env); ok = false; }
+            static const char* hex = "0123456789abcdef";
+            for (jbyte byte : bytes) {
+                const unsigned char value = static_cast<unsigned char>(byte);
+                actual.push_back(hex[(value >> 4) & 0x0F]);
+                actual.push_back(hex[value & 0x0F]);
+            }
+            env->DeleteLocalRef(hash);
+        } else {
+            ok = false;
+        }
+        if (close) env->CallVoidMethod(input, close);
+        if (env->ExceptionCheck()) clear_jni_exception(env);
+        if (buffer) env->DeleteLocalRef(buffer);
+        env->DeleteLocalRef(streamClass);
+        ok = ok && actual == expected;
+        if (!ok) LOGE("Downloaded Qwen model failed SHA-256 verification");
+    }
+
+    if (input) env->DeleteLocalRef(input);
+    if (pathText) env->DeleteLocalRef(pathText);
+    if (inputClass) env->DeleteLocalRef(inputClass);
+    if (digest) env->DeleteLocalRef(digest);
+    if (algorithm) env->DeleteLocalRef(algorithm);
+    env->DeleteLocalRef(digestClass);
+    return ok;
+}
+bool download_model_file(Engine& e, const std::string& url, const std::string& path, const std::string& expectedSha256) {
     JavaVM* vm = e.app->activity->vm;
     JNIEnv* env = nullptr;
     if (!vm || vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) {
@@ -819,6 +883,7 @@ bool download_model_file(Engine& e, const std::string& url, const std::string& p
     if (urlObject) env->DeleteLocalRef(urlObject);
     if (urlText) env->DeleteLocalRef(urlText);
     if (urlClass) env->DeleteLocalRef(urlClass);
+    if (success) success = verify_model_sha256(env, path, expectedSha256);
     vm->DetachCurrentThread();
 
     if (!success) std::remove(path.c_str());
@@ -844,7 +909,9 @@ void start_offline_model_setup(Engine& e) {
         set_status(e, "DOWNLOADING OFFLINE AI - 484 MB");
         const std::string url =
             "https://huggingface.co/QuantFactory/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B.Q4_K_M.gguf";
-        const bool downloaded = download_model_file(e, url, modelPath);
+        const std::string expectedSha256 =
+            "7af3fdf842f87b24672f8a7f1dd50404043f0bfb71093ff91c31d2b49df4631d";
+        const bool downloaded = download_model_file(e, url, modelPath, expectedSha256);
         const bool valid = downloaded && jarvis::offline_llm_model_exists(modelPath);
         e.localModelReady.store(valid);
         e.modelDownloading.store(false);
