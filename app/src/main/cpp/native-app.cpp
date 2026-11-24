@@ -76,6 +76,7 @@ struct Engine {
     std::mutex statusMutex;
     std::atomic<int> pendingCommand{0};
     std::string pendingContact;
+    std::string pendingYoutubeQuery;
     std::atomic<bool> processing{false};
     std::atomic<bool> wakeListening{false};
     std::atomic<bool> wakeDetected{false};
@@ -917,10 +918,12 @@ void start_transcription(Engine& e) {
         LOGI("Offline ASR transcript: %s", result.text.c_str());
 
         const std::string contactQuery = jarvis::extract_contact_query(result.text);
-        const jarvis::Command command = contactQuery.empty()
-            ? jarvis::classify_command(result.text)
-            : jarvis::Command::OpenWhatsAppContact;
+        const std::string youtubeQuery = jarvis::extract_youtube_query(result.text);
+        const jarvis::Command command = !contactQuery.empty()
+            ? jarvis::Command::OpenWhatsAppContact
+            : (!youtubeQuery.empty() ? jarvis::Command::SearchYouTube : jarvis::classify_command(result.text));
         if (!contactQuery.empty()) e.pendingContact = contactQuery;
+        if (!youtubeQuery.empty()) e.pendingYoutubeQuery = youtubeQuery;
         if (command == jarvis::Command::Unknown) {
             if (!result.text.empty()) {
                 e.pendingQuestion = result.text;
@@ -1402,8 +1405,10 @@ void android_main(android_app* app) {
         const int completedCommand = engine.pendingCommand.exchange(0);
         if (completedCommand > 0) {
             const std::string contact = std::move(engine.pendingContact);
+            const std::string youtube = std::move(engine.pendingYoutubeQuery);
             engine.pendingContact.clear();
-            execute_command(engine, static_cast<jarvis::Command>(completedCommand), contact);
+            engine.pendingYoutubeQuery.clear();
+            execute_command(engine, static_cast<jarvis::Command>(completedCommand), contact, youtube);
         }
 
         if (engine.restartWake.exchange(false) && !engine.processing.load() &&
