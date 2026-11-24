@@ -15,19 +15,19 @@ This is a conservative engineering estimate, not a measured runtime or device-te
 
 | Module | Source status | Verification status |
 |---|---|---|
-| Native C++/NativeActivity architecture | Implemented | Historical ARM64 CI build passed; latest changes pending CI |
+| Native C++/NativeActivity architecture | Implemented | ARM64 CI build passed for verified commit a24a55c |
 | OpenGL ES dashboard | Basic implementation | Physical screen/responsiveness review pending |
 | Audio capture | Implemented | Needs Motorola microphone test |
 | Wake-word spotting | C++ KWS integration present | False-positive/false-negative and foreground lifecycle tests pending |
 | Voice activity detection | RMS/silence gate and command timeout present | Real speech/noise tuning pending |
 | Offline ASR | Whisper Tiny multilingual integration present | Hindi/Hinglish accuracy on target phone pending |
-| Command router | Volume, app launch, dialer, contact and YouTube intents | Unit tests added; latest test run pending |
+| Command router | Volume, app launch, dialer, contact and YouTube intents | C++ regression tests passed in run 45378872712 |
 | WhatsApp contact lookup | Android Contacts Provider integration present | Real contact data/duplicate names testing pending |
-| WhatsApp message flow | Recipient/text confirmation and manual-send deep-link flow added | CI and physical WhatsApp verification pending |
-| YouTube search | Query parsing and Android VIEW intent added | Latest CI and installed-app/browser fallback tests pending |
-| Hindi TTS | Piper phonemizer + Sherpa VITS code integrated | Latest CI and pronunciation/audio-device tests pending |
-| Offline LLM | llama.cpp/Qwen3 model flow integrated | Historical native build passed; recent context/download integrity changes pending CI; inference/device tests pending |
-| Model integrity | Model download progress/timeouts and SHA-256 verification added | Latest CI pending; full download/hash verification on device pending |
+| WhatsApp message flow | Recipient/text confirmation and manual-send deep-link flow added | Included in green ARM64 build; physical WhatsApp verification pending |
+| YouTube search | Query parsing and Android VIEW intent added | Included in green ARM64 build; device intent tests pending |
+| Hindi TTS | Piper phonemizer + Sherpa VITS code integrated | Included in green ARM64 build; pronunciation/audio-device tests pending |
+| Offline LLM | llama.cpp/Qwen3 model flow integrated | Included in green ARM64 build; full model download/inference/device tests pending |
+| Model integrity | Model download progress/timeouts, pinned SHA-256 and verification marker added | Included in green ARM64 build; actual 484 MB download/hash run pending |
 | Conversation memory | Up to four recent turns in process memory | Runtime context-quality test pending |
 | Online AI provider | Not implemented | Provider choice, credential UX and secure storage design required |
 | Background/screen-off wake service | Not implemented | NativeActivity-only C++ limitation; needs architecture decision |
@@ -43,7 +43,7 @@ This is a conservative engineering estimate, not a measured runtime or device-te
 - Run: https://github.com/iGurpeetSingh/JARVIS-ANDROID/actions/runs/45378872712
 - Changes after this commit are not considered build-verified until their own GitHub Actions run succeeds.
 
-## Recent implementation changes requiring new CI/device verification
+## Recent implementation changes included in the latest green CI (device verification still pending)
 
 1. Corrected llama.cpp prompt-token budget versus batch/context bounds; old conversation turns are trimmed before oversized prompts are rejected.
 2. Serialized TTS launches and prevented wake restart while the local LLM is generating.
