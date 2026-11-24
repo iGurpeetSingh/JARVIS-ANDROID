@@ -69,6 +69,9 @@ struct Engine {
     std::thread modelDownloadThread;
     std::unique_ptr<sherpa_onnx::cxx::OfflineTts> hindiTts;
     std::atomic<bool> speaking{false};
+    std::atomic<bool> llmProcessing{false};
+    std::atomic<bool> shuttingDown{false};
+    std::mutex ttsMutex;
     std::atomic<bool> modelDownloading{false};
     std::atomic<bool> localModelReady{false};
     std::atomic<bool> pendingLlmQuery{false};
@@ -631,8 +634,12 @@ void play_generated_audio(const sherpa_onnx::cxx::GeneratedAudio& generated) {
 }
 
 void speak_hindi_async(Engine& e, const std::string& text) {
-    if (text.empty() || e.speaking.load()) return;
-    if (e.ttsThread.joinable()) e.ttsThread.join();
+    if (text.empty()) return;
+    std::lock_guard<std::mutex> launchLock(e.ttsMutex);
+    if (e.shuttingDown.load() || e.speaking.load()) return;
+    if (e.ttsThread.joinable() && e.ttsThread.get_id() != std::this_thread::get_id()) {
+        e.ttsThread.join();
+    }
 
     e.speaking.store(true);
     e.ttsThread = std::thread([&e, text] {
@@ -849,7 +856,13 @@ void start_offline_model_setup(Engine& e) {
 }
 
 void start_offline_llm_reply(Engine& e, const std::string& question) {
+    if (e.shuttingDown.load()) return;
+    if (e.llmProcessing.exchange(true)) {
+        set_status(e, "LOCAL AI IS ALREADY THINKING");
+        return;
+    }
     if (!jarvis::offline_llm_model_exists(local_llm_model_path(e))) {
+        e.llmProcessing.store(false);
         set_status(e, "TAP AI SETUP TO DOWNLOAD OFFLINE MODEL");
         speak_hindi_async(e, "ऑफलाइन ए आई मॉडल अभी डाउनलोड नहीं हुआ है। पहले नीचे ए आई सेटअप दबाएँ।");
         return;
@@ -869,6 +882,7 @@ void start_offline_llm_reply(Engine& e, const std::string& question) {
             LOGI("Offline AI answer generated (%zu chars)", answer.size());
             speak_hindi_async(e, answer);
         }
+        e.llmProcessing.store(false);
     });
 }
 
@@ -1475,11 +1489,12 @@ void android_main(android_app* app) {
                                      reinterpret_cast<void**>(&source));
             if (ident >= 0 && source) source->process(app, source);
             if (app->destroyRequested) {
+                engine.shuttingDown.store(true);
                 stop_audio(engine);
                 if (engine.asrThread.joinable()) engine.asrThread.join();
-                if (engine.ttsThread.joinable()) engine.ttsThread.join();
                 if (engine.llmThread.joinable()) engine.llmThread.join();
                 if (engine.modelDownloadThread.joinable()) engine.modelDownloadThread.join();
+                if (engine.ttsThread.joinable()) engine.ttsThread.join();
                 jarvis::offline_llm_shutdown();
                 shutdown_gl(engine);
                 return;
@@ -1522,7 +1537,9 @@ void android_main(android_app* app) {
         }
 
         if (engine.restartWake.exchange(false) && !engine.processing.load() &&
-            !engine.speaking.load() && !engine.recording.load() && !app->destroyRequested) {
+            !engine.llmProcessing.load() && !engine.speaking.load() &&
+            !engine.recording.load() && !engine.shuttingDown.load() &&
+            !app->destroyRequested) {
             start_audio(engine);
         }
 
