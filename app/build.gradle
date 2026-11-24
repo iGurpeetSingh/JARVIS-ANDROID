@@ -2,6 +2,14 @@ plugins {
     id 'com.android.application'
 }
 
+def releaseStorePath = System.getenv('JARVIS_RELEASE_STORE_FILE')
+def releaseStorePassword = System.getenv('JARVIS_RELEASE_STORE_PASSWORD')
+def releaseKeyAlias = System.getenv('JARVIS_RELEASE_KEY_ALIAS')
+def releaseKeyPassword = System.getenv('JARVIS_RELEASE_KEY_PASSWORD')
+def releaseSigningConfigured = [
+    releaseStorePath, releaseStorePassword, releaseKeyAlias, releaseKeyPassword
+].every { it != null && !it.trim().isEmpty() }
+
 android {
     namespace 'com.jarvis.assistant'
     compileSdk 35
@@ -11,8 +19,8 @@ android {
         applicationId 'com.jarvis.assistant'
         minSdk 28
         targetSdk 35
-        versionCode 3
-        versionName '0.3.0'
+        versionCode 4
+        versionName '0.4.0'
 
         externalNativeBuild {
             cmake {
@@ -32,11 +40,26 @@ android {
         }
     }
 
+    signingConfigs {
+        release {
+            if (releaseSigningConfigured) {
+                storeFile file(releaseStorePath)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         debug {
             debuggable true
         }
         release {
+            if (releaseSigningConfigured) {
+                signingConfig signingConfigs.release
+            }
+            debuggable false
             minifyEnabled false
         }
     }
@@ -45,5 +68,22 @@ android {
         jniLibs {
             useLegacyPackaging false
         }
+    }
+}
+
+
+gradle.taskGraph.whenReady { graph ->
+    def isReleaseBuild = graph.allTasks.any {
+        it.name == 'assembleRelease' || it.name == 'bundleRelease'
+    }
+    if (isReleaseBuild && !releaseSigningConfigured) {
+        throw new GradleException(
+            'Release signing is required. Set JARVIS_RELEASE_STORE_FILE, ' +
+            'JARVIS_RELEASE_STORE_PASSWORD, JARVIS_RELEASE_KEY_ALIAS and ' +
+            'JARVIS_RELEASE_KEY_PASSWORD in the build environment.'
+        )
+    }
+    if (isReleaseBuild && !file(releaseStorePath).isFile()) {
+        throw new GradleException('JARVIS_RELEASE_STORE_FILE does not point to an existing keystore file.')
     }
 }
