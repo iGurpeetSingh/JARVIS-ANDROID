@@ -1,33 +1,40 @@
 # JARVIS-ANDROID
 
-A personal Android voice assistant project for Motorola and other Android devices.
+A personal Android voice-assistant project for Motorola and other Android devices.
 
-## Current milestone: Android MVP
+## Implemented in the current MVP
 
-The first milestone focuses on a buildable Android app with:
-- Dark JARVIS-inspired dashboard
-- Tap-to-talk speech recognition (Hindi/English support depends on the device speech service)
-- Spoken responses using Android TextToSpeech
-- Basic safe commands: open YouTube, open WhatsApp, open dialer, volume up/down
-- Online/offline mode status placeholder (AI providers and local model runtime are not wired yet)
+- Dark JARVIS-inspired Android dashboard built with Kotlin and Jetpack Compose.
+- Tap-to-talk speech recognition using Android SpeechRecognizer (Hindi locale requested; actual language support depends on the installed recognition service).
+- Spoken responses using Android TextToSpeech.
+- Basic commands for media volume up/down, opening YouTube and WhatsApp, and opening the phone dialer.
+- A Settings screen with AUTO / ONLINE / OFFLINE mode preference.
+- Network validation logic that can choose an online or offline route in AUTO mode.
+- GitHub Actions workflow that builds and uploads a debug APK artifact.
 
-## Important implementation notes
+## Important limitations — not yet implemented
 
-- The current MVP does **not** provide always-on wake-word detection. A reliable "Jarvis" hotword listener requires a dedicated on-device keyword-spotting model and a foreground microphone service, with Android-version and OEM restrictions.
-- The current MVP does **not** include a cloud AI API or a downloadable local LLM yet. Those are later milestones.
-- Messaging and calling are not silently executed. The app opens the relevant Android app/dialer; sensitive actions require user interaction.
-- Online AI requires a provider API key. Never commit API keys to this repository.
+- No always-on Jarvis wake-word listener. The current microphone flow starts only after the user taps the microphone.
+- No foreground microphone service or lock-screen wake-word support.
+- No online AI provider is connected. An API key/provider integration is not included.
+- No offline LLM runtime or downloadable model is bundled. The OFFLINE setting is currently a saved preference, not a working local AI model.
+- AUTO mode currently has network-routing logic only; it does not yet call an online provider or local model.
+- WhatsApp automation currently opens WhatsApp only. It does not search contacts or send messages.
+- YouTube command currently opens YouTube; voice-driven search is not yet implemented.
+- No Motorola physical-device QA has been completed.
 
 ## Build
 
-The GitHub Actions workflow builds a debug APK using Gradle installed by the workflow. Download the artifact from the Actions run.
+GitHub Actions runs gradle --no-daemon :app:assembleDebug and uploads app/build/outputs/apk/debug/app-debug.apk as an artifact.
+
+Open the Actions tab, select the latest successful Android CI run, and download the jarvis-android-debug-apk artifact. The artifact is a debug build for testing, not a signed production release.
 
 ## Roadmap
 
-1. Buildable Android MVP and CI
-2. Speech/command tests and Motorola device validation
-3. On-device wake-word detection + foreground service
-4. Offline speech and local LLM integration
-5. Online AI provider adapter and automatic routing
-6. Permission-aware phone automation
-7. Release APK signing and installation guide
+1. Complete build and resolve compile/runtime issues.
+2. Validate microphone, Hindi speech recognition and TTS on a Motorola device.
+3. Add a supported on-device keyword-spotting model and compliant foreground-service flow.
+4. Integrate an offline speech/LLM runtime and downloadable model management.
+5. Add an online AI provider adapter with user-supplied key and no paid usage without consent.
+6. Implement safe, permission-aware WhatsApp and YouTube workflows.
+7. Add tests, crash handling, privacy disclosures and release signing.
