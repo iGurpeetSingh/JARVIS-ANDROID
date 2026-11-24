@@ -504,6 +504,12 @@ void set_edge_overlay(Engine& e, bool visible) {
     env->DeleteLocalRef(serviceClass);
 }
 
+void hide_edge_overlay(Engine& e) {
+    if (!e.edgeOverlayVisible) return;
+    set_edge_overlay(e, false);
+    e.edgeOverlayVisible = false;
+}
+
 bool ensure_voice_service(Engine& e) {
     if (gVoiceServiceRunning.load(std::memory_order_acquire)) return true;
     if (!e.hasWindowFocus.load()) return false;
@@ -1385,6 +1391,7 @@ void launch_package(Engine& e, const char* packageName) {
             contextClass, "startActivity", "(Landroid/content/Intent;)V");
         env->CallVoidMethod(activity, startActivity, intent);
         clear_jni_exception(env);
+        hide_edge_overlay(e);
         set_status(e, std::string("OPENED ") + packageName);
         env->DeleteLocalRef(intent);
     } else {
@@ -1434,6 +1441,7 @@ void launch_dialer(Engine& e) {
         activityClass, "startActivity", "(Landroid/content/Intent;)V");
     env->CallVoidMethod(e.app->activity->clazz, startActivity, intent);
     clear_jni_exception(env);
+    hide_edge_overlay(e);
     env->DeleteLocalRef(activityClass);
     env->DeleteLocalRef(intent);
     env->DeleteLocalRef(action);
@@ -1477,6 +1485,7 @@ bool launch_whatsapp_chat(Engine& e, const std::string& phone, const std::string
     jstring urlValue = env->NewStringUTF(url.c_str());
     jobject uri = env->CallStaticObjectMethod(uriClass, parse, urlValue);
     clear_jni_exception(env);
+    hide_edge_overlay(e);
 
     jclass intentClass = env->FindClass("android/content/Intent");
     jmethodID constructor = env->GetMethodID(intentClass, "<init>", "(Ljava/lang/String;)V");
@@ -1709,6 +1718,7 @@ bool open_external_url(Engine& e, const std::string& url, const char* packageNam
     env->CallVoidMethod(e.app->activity->clazz, startActivity, intent);
     const bool success = !env->ExceptionCheck();
     clear_jni_exception(env);
+    hide_edge_overlay(e);
     env->DeleteLocalRef(activityClass);
     env->DeleteLocalRef(intent);
     env->DeleteLocalRef(action);
