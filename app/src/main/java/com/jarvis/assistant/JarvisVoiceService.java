@@ -141,7 +141,7 @@ public final class JarvisVoiceService extends Service {
                 .addAction(new Notification.Action.Builder(
                         android.R.drawable.ic_media_pause, "Stop listening", stopPending).build())
                 .build();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             startForeground(NOTIFICATION_ID, notification,
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
         } else {
