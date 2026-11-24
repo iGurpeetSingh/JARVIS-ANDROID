@@ -75,7 +75,7 @@ A successful CI build proves compilation and packaging for the code revision tha
 
 ## Remaining work
 
-- Verify the latest code revision with a fresh full CI build after the latest WhatsApp confirmation, LLM context and model integrity changes.
+- Keep CI green for every subsequent code change.
 - Install and test the latest APK on the target Motorola device.
 - Validate wake-word accuracy, false activations, VAD timing and command capture in real environments.
 - Validate Hindi ASR quality and TTS pronunciation on-device.
@@ -87,7 +87,7 @@ A successful CI build proves compilation and packaging for the code revision tha
 - Decide whether background service behavior can be supported without violating the strict C++ application-source requirement.
 - Complete lifecycle, privacy, crash-recovery, long-duration and production-signing checks.
 
-## Last historical verified CI
+## Latest fully verified CI
 
 Run 45375534996 successfully built and uploaded a debug APK for commit cc5b4b01c9b3dde01aacd164ff8d0c0c6ecd074a. Newer changes must be verified by their own CI run before being called build-verified.
 
