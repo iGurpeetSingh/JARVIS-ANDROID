@@ -42,9 +42,11 @@ Use this checklist on the actual target Motorola Android phone. Do not mark any 
 | JARVIS-025 | Low RAM | Attempt local inference with very low available RAM | JARVIS refuses to load and gives a clear low-memory response instead of crashing |
 | JARVIS-026 | Offline conversation | Download model, disable network and ask a general question | Qwen responds locally and Hindi TTS speaks the response |
 | JARVIS-027 | Conversation context | Ask a follow-up referring to the previous question | Recent conversation turns are used appropriately |
-| JARVIS-028 | Background transition | Press Home or switch apps while listener is active | Microphone capture stops; no claim of background listening is shown |
-| JARVIS-029 | Foreground resume | Return to JARVIS | Foreground wake listener restarts if permissions and app state allow |
+| JARVIS-028 | Background transition | Start the voice listener, press Home or switch to another app, then say the wake phrase | Foreground microphone service remains active; the RGB border appears above the other app after wake detection and does not steal touch input |
+| JARVIS-029 | Foreground resume | Return to JARVIS after a background voice command | Dashboard returns without restarting the process; one microphone stream remains active and the listener state is accurate |
 | JARVIS-030 | Stability | Use voice, TTS and model inference repeatedly for at least 20 minutes | No crash, stuck thread, runaway memory growth or unrecoverable audio state |
+| JARVIS-031 | First wake RGB startup race | After granting microphone and overlay permissions, trigger the wake phrase immediately as the voice service starts | The first wake request is retained until the service is ready; the RGB border appears once and is removed after command execution |
+| JARVIS-032 | Overlay permission unavailable | Disable "Display over other apps", open JARVIS and trigger a wake phrase | No crash; Logcat reports the missing overlay permission; the app does not claim that the RGB border is visible |
 
 ## Evidence to capture
 
