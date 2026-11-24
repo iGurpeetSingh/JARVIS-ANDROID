@@ -45,12 +45,12 @@ jobs:
       - name: Verify C++-only application sources
         shell: bash
         run: |
-          if find app/src/main -type f \\( -name '*.kt' -o -name '*.java' \\) | grep -q .; then
+          if find app/src/main -type f \( -name '*.kt' -o -name '*.java' \) | grep -q .; then
             echo "Kotlin/Java application source found. This repository must remain native C++."
-            find app/src/main -type f \\( -name '*.kt' -o -name '*.java' \\)
+            find app/src/main -type f \( -name '*.kt' -o -name '*.java' \)
             exit 1
           fi
-          if grep -R -nE 'org\\.jetbrains\\.kotlin|kotlin-android|composeOptions|androidx\\.compose' --include='*.gradle' --include='*.gradle.kts' .; then
+          if grep -R -nE 'org\.jetbrains\.kotlin|kotlin-android|composeOptions|androidx\.compose' --include='*.gradle' --include='*.gradle.kts' .; then
             echo "Kotlin or Compose Gradle dependency found."
             exit 1
           fi
