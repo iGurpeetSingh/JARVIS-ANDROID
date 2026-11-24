@@ -970,27 +970,30 @@ void start_transcription(Engine& e) {
         jarvis::Command command = !contactQuery.empty()
             ? jarvis::Command::OpenWhatsAppContact
             : (!youtubeQuery.empty() ? jarvis::Command::SearchYouTube : jarvis::classify_command(result.text));
+        bool blockedByConfirmation = false;
         if (e.awaitingMessageConfirmation.load()) {
             if (command != jarvis::Command::ConfirmPendingAction && command != jarvis::Command::CancelPendingAction) {
                 set_status(e, "PLEASE CONFIRM OR CANCEL THE WHATSAPP MESSAGE");
                 speak_hindi_async(e, "कृपया हाँ या नहीं बोलकर पुष्टि करें।");
-                command = jarvis::Command::Unknown;
+                blockedByConfirmation = true;
             }
         }
-        if (!contactQuery.empty()) e.pendingContact = contactQuery;
-        if (!contactMessage.empty()) e.pendingContactMessage = contactMessage;
-        if (!youtubeQuery.empty()) e.pendingYoutubeQuery = youtubeQuery;
-        if (command == jarvis::Command::Unknown) {
-            if (!result.text.empty()) {
-                e.pendingQuestion = result.text;
-                e.pendingLlmQuery.store(true, std::memory_order_release);
-                set_status(e, "QUESTION HEARD - ROUTING TO LOCAL AI");
+        if (!blockedByConfirmation) {
+            if (!contactQuery.empty()) e.pendingContact = contactQuery;
+            if (!contactMessage.empty()) e.pendingContactMessage = contactMessage;
+            if (!youtubeQuery.empty()) e.pendingYoutubeQuery = youtubeQuery;
+            if (command == jarvis::Command::Unknown) {
+                if (!result.text.empty()) {
+                    e.pendingQuestion = result.text;
+                    e.pendingLlmQuery.store(true, std::memory_order_release);
+                    set_status(e, "QUESTION HEARD - ROUTING TO LOCAL AI");
+                } else {
+                    set_status(e, "NO SPEECH RECOGNIZED");
+                }
             } else {
-                set_status(e, "NO SPEECH RECOGNIZED");
+                e.pendingCommand.store(static_cast<int>(command));
+                set_status(e, "VOICE COMMAND RECOGNIZED");
             }
-        } else {
-            e.pendingCommand.store(static_cast<int>(command));
-            set_status(e, "VOICE COMMAND RECOGNIZED");
         }
         e.processing.store(false);
         e.restartWake.store(true);
