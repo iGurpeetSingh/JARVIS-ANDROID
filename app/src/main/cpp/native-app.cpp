@@ -68,6 +68,7 @@ struct Engine {
     std::chrono::steady_clock::time_point voiceServiceStartTime{};
     std::chrono::steady_clock::time_point nextVoiceServiceRetry{};
     bool overlaySettingsRequested = false;
+    bool overlayPermissionPromptPending = false;
     bool lastVoiceServiceRunning = false;
     bool jniAttachedByNativeThread = false;
     std::string status = "NATIVE C++ CORE READY";
@@ -553,13 +554,12 @@ bool ensure_voice_service(Engine& e) {
     e.voiceServiceStartTime = now;
     set_status(e, "STARTING GURI OFFLINE VOICE LISTENER");
 
-    // Open Android's overlay settings only after requesting the microphone
-    // foreground service, so the optional visual effect cannot block or
-    // prevent the required foreground-service start.
+    // Defer the optional overlay dialog until the foreground-service bridge
+    // confirms startForeground() succeeded. Opening Settings too early can
+    // background the Activity while Android is still starting the mic service.
     if (!overlayAllowed && !e.overlaySettingsRequested) {
         e.overlaySettingsRequested = true;
-        set_status(e, "VOICE LISTENER STARTING - OPTIONAL RGB OVERLAY ACCESS");
-        request_overlay_permission(e);
+        e.overlayPermissionPromptPending = true;
     }
     return true;
 }
@@ -1997,6 +1997,11 @@ void android_main(android_app* app) {
             engine.voiceServiceStartRequested = false;
             engine.nextVoiceServiceRetry = std::chrono::steady_clock::time_point{};
             engine.autoWakePending.store(true);
+            set_status(engine, "GURI VOICE LISTENER ACTIVE - SAY GURI");
+            if (engine.overlayPermissionPromptPending && engine.hasWindowFocus.load()) {
+                engine.overlayPermissionPromptPending = false;
+                request_overlay_permission(engine);
+            }
         } else if (!voiceServiceRunning && engine.lastVoiceServiceRunning) {
             if (engine.recording.load()) stop_audio(engine);
             hide_edge_overlay(engine);
