@@ -57,7 +57,7 @@ bool offline_llm_model_exists(const std::string& modelPath) {
     std::fseek(file, 0, SEEK_END);
     const long size = std::ftell(file);
     std::fclose(file);
-    return size > 300 * 1024 * 1024;
+    return size > 450L * 1024L * 1024L;
 }
 
 std::string offline_llm_generate(const std::string& modelPath,
