@@ -54,6 +54,47 @@ cp "$ENCODER" "$ROOT/app/src/main/assets/sherpa-whisper-tiny/encoder.int8.onnx"
 cp "$DECODER" "$ROOT/app/src/main/assets/sherpa-whisper-tiny/decoder.int8.onnx"
 cp "$TOKENS" "$ROOT/app/src/main/assets/sherpa-whisper-tiny/tokens.txt"
 
+echo "[JARVIS] Downloading streaming keyword-spotting model for the Jarvis wake phrase"
+KWS_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01-mobile.tar.bz2"
+curl --fail --location --retry 3 "$KWS_URL" -o "$TMP_DIR/jarvis-kws-mobile.tar.bz2"
+mkdir -p "$TMP_DIR/jarvis-kws"
+tar -xjf "$TMP_DIR/jarvis-kws-mobile.tar.bz2" -C "$TMP_DIR/jarvis-kws"
+
+KWS_ENCODER="$(find "$TMP_DIR/jarvis-kws" -type f -name 'encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx' -print -quit)"
+KWS_DECODER="$(find "$TMP_DIR/jarvis-kws" -type f -name 'decoder-epoch-12-avg-2-chunk-16-left-64.onnx' -print -quit)"
+KWS_JOINER="$(find "$TMP_DIR/jarvis-kws" -type f -name 'joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx' -print -quit)"
+KWS_TOKENS="$(find "$TMP_DIR/jarvis-kws" -type f -name 'tokens.txt' -print -quit)"
+KWS_BPE="$(find "$TMP_DIR/jarvis-kws" -type f -name 'bpe.model' -print -quit)"
+if [[ -z "$KWS_ENCODER" || -z "$KWS_DECODER" || -z "$KWS_JOINER" || -z "$KWS_TOKENS" || -z "$KWS_BPE" ]]; then
+  echo "The wake-word model archive is missing an expected Zipformer/BPE file."
+  find "$TMP_DIR/jarvis-kws" -type f | head -100
+  exit 1
+fi
+
+mkdir -p "$ROOT/app/src/main/assets/jarvis-kws"
+cp "$KWS_ENCODER" "$ROOT/app/src/main/assets/jarvis-kws/encoder.int8.onnx"
+cp "$KWS_DECODER" "$ROOT/app/src/main/assets/jarvis-kws/decoder.onnx"
+cp "$KWS_JOINER" "$ROOT/app/src/main/assets/jarvis-kws/joiner.int8.onnx"
+cp "$KWS_TOKENS" "$ROOT/app/src/main/assets/jarvis-kws/tokens.txt"
+cp "$KWS_BPE" "$ROOT/app/src/main/assets/jarvis-kws/bpe.model"
+
+echo "[JARVIS] Creating BPE-tokenized open-vocabulary wake phrase"
+python3 -m pip install --disable-pip-version-check --quiet "sherpa-onnx==2.0.3" sentencepiece pypinyin
+python3 - "$ROOT/app/src/main/assets/jarvis-kws/tokens.txt" \
+  "$ROOT/app/src/main/assets/jarvis-kws/bpe.model" \
+  "$ROOT/app/src/main/assets/jarvis-kws/keywords.txt" <<'PY'
+import sys
+from sherpa_onnx import text2token
+
+tokens_path, bpe_path, output_path = sys.argv[1:4]
+phrases = ["JARVIS", "HEY JARVIS"]
+encoded = text2token(phrases, tokens_path, tokens_type="bpe", bpe_model=bpe_path)
+with open(output_path, "w", encoding="utf-8") as output:
+    for phrase, pieces in zip(phrases, encoded):
+        output.write(" ".join(pieces) + " :2.0 #0.25 @" + phrase + "\\n")
+print("Generated wake phrases:", phrases)
+PY
+
 echo "[JARVIS] Native dependency preparation complete."
 du -h "$ROOT/app/src/main/jniLibs/arm64-v8a/"*.so \
-  "$ROOT/app/src/main/assets/sherpa-whisper-tiny/"*
+  "$ROOT/app/src/main/assets/sherpa-whisper-tiny/"* "$ROOT/app/src/main/assets/jarvis-kws/"*
