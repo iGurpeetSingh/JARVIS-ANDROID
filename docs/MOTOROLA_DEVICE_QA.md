@@ -47,6 +47,9 @@ Use this checklist on the actual target Motorola Android phone. Do not mark any 
 | GURI-030 | Stability | Use voice, TTS and model inference repeatedly for at least 20 minutes | No crash, stuck thread, runaway memory growth or unrecoverable audio state |
 | GURI-031 | First wake RGB startup race | After granting microphone and overlay permissions, trigger the wake phrase immediately as the voice service starts | The first wake request is retained until the service is ready; the RGB border appears once and is removed after command execution |
 | GURI-032 | Overlay permission unavailable | Disable "Display over other apps", open GURI and trigger a wake phrase | Voice listener still starts and commands work; Logcat reports that the RGB border is unavailable without crashing |
+| GURI-033 | Mic button stays in GURI | With RECORD_AUDIO already granted, open the dashboard and tap the central microphone button once | GURI stays in the foreground dashboard; listening status updates; no return to Home, previous app or Android Settings |
+| GURI-034 | First-use mic permission return | Revoke RECORD_AUDIO in Android app settings, reopen GURI and follow the system microphone permission prompt | After Allow, GURI returns to its own dashboard and starts the listener without requiring an app relaunch |
+| GURI-035 | Mic button without overlay permission | Keep "Display over other apps" disabled, open GURI and tap the microphone button | Microphone permission/listening works independently; no automatic Overlay Settings screen is opened |
 
 ## Evidence to capture
 
@@ -54,7 +57,7 @@ Use this checklist on the actual target Motorola Android phone. Do not mark any 
 - APK version, Git commit SHA and GitHub Actions run URL.
 - Pass/fail for every test ID, with a short failure note.
 - Screen recording or screenshot for UI/permission/confirmation cases.
-- Logcat output filtered by GURI_NATIVE for native errors.
+- Logcat output filtered by GURI_NATIVE and GURI_PERMISSION for native and permission-flow diagnostics.
 - Available RAM and free storage before Qwen load/download.
 - Model SHA-256 verification result.
 
