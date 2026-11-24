@@ -7,6 +7,7 @@
 #include <GLES2/gl2.h>
 #include <jni.h>
 #include "command_engine.h"
+#include "sherpa-onnx/c-api/cxx-api.h"
 
 #include <algorithm>
 #include <array>
@@ -16,6 +17,11 @@
 #include <cstdio>
 #include <string>
 #include <vector>
+#include <mutex>
+#include <thread>
+#include <fstream>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #define LOG_TAG "JARVIS_NATIVE"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -42,7 +48,24 @@ struct Engine {
     std::string status = "NATIVE C++ CORE READY";
     AAudioStream* audioStream = nullptr;
     std::atomic<int> inputPeak{0};
+    std::mutex audioMutex;
+    std::vector<float> recordedSamples;
+    std::mutex statusMutex;
+    std::thread asrThread;
+    std::atomic<int> pendingCommand{0};
+    std::atomic<bool> processing{false};
+    int32_t capturedSampleRate = 16000;
 };
+
+void set_status(Engine& e, const std::string& value) {
+    std::lock_guard<std::mutex> lock(e.statusMutex);
+    e.status = value;
+}
+
+std::string get_status(Engine& e) {
+    std::lock_guard<std::mutex> lock(e.statusMutex);
+    return e.status;
+}
 
 GLuint compile_shader(GLenum type, const char* source) {
     GLuint shader = glCreateShader(type);
@@ -230,7 +253,7 @@ void draw_ui(Engine& e) {
     draw_text(e, prompt, (e.width - prompt.size()*4.0f*labelScale)/2.0f,
               e.height*0.65f, labelScale, 0.38f,0.85f,1.0f);
 
-    draw_text(e, e.status, e.width*0.07f, e.height*0.73f, 2.4f, 0.78f,0.86f,0.94f);
+    draw_text(e, get_status(e), e.width*0.07f, e.height*0.73f, 2.4f, 0.78f,0.86f,0.94f);
 
     const float margin = e.width*0.07f;
     const float gap = e.width*0.04f;
@@ -286,8 +309,16 @@ aaudio_data_callback_result_t audio_callback(AAudioStream*, void* userData,
     auto* e = static_cast<Engine*>(userData);
     const auto* samples = static_cast<const int16_t*>(audioData);
     int peak = 0;
-    for (int32_t i = 0; i < numFrames; ++i) {
-        peak = std::max(peak, std::abs(static_cast<int>(samples[i])));
+    {
+        std::lock_guard<std::mutex> lock(e->audioMutex);
+        const size_t maxSamples = static_cast<size_t>(e->capturedSampleRate) * 60;
+        for (int32_t i = 0; i < numFrames; ++i) {
+            const int value = static_cast<int>(samples[i]);
+            peak = std::max(peak, std::abs(value));
+            if (e->recordedSamples.size() < maxSamples) {
+                e->recordedSamples.push_back(static_cast<float>(value) / 32768.0f);
+            }
+        }
     }
     e->inputPeak.store(peak, std::memory_order_relaxed);
     return AAUDIO_CALLBACK_RESULT_CONTINUE;
@@ -302,6 +333,122 @@ void stop_audio(Engine& e) {
     e.recording = false;
 }
 
+bool copy_asset_to_file(AAssetManager* manager, const char* assetName,
+                        const std::string& outputPath) {
+    struct stat info {};
+    if (stat(outputPath.c_str(), &info) == 0 && info.st_size > 0) return true;
+
+    AAsset* asset = AAssetManager_open(manager, assetName, AASSET_MODE_STREAMING);
+    if (!asset) {
+        LOGE("Model asset not found: %s", assetName);
+        return false;
+    }
+
+    std::ofstream output(outputPath, std::ios::binary | std::ios::trunc);
+    if (!output) {
+        AAsset_close(asset);
+        LOGE("Cannot create model file: %s", outputPath.c_str());
+        return false;
+    }
+
+    std::array<char, 1024 * 1024> buffer{};
+    int count = 0;
+    while ((count = AAsset_read(asset, buffer.data(), buffer.size())) > 0) {
+        output.write(buffer.data(), count);
+        if (!output) {
+            output.close();
+            AAsset_close(asset);
+            return false;
+        }
+    }
+    output.close();
+    AAsset_close(asset);
+    return count == 0;
+}
+
+void start_transcription(Engine& e) {
+    if (e.processing.load()) {
+        set_status(e, "ASR IS STILL PROCESSING");
+        return;
+    }
+
+    if (e.asrThread.joinable()) e.asrThread.join();
+
+    std::vector<float> samples;
+    {
+        std::lock_guard<std::mutex> lock(e.audioMutex);
+        samples = e.recordedSamples;
+    }
+
+    if (samples.size() < 4000) {
+        set_status(e, "TOO SHORT - SPEAK FOR 1 SECOND");
+        return;
+    }
+
+    e.processing.store(true);
+    set_status(e, "LOADING OFFLINE HINDI ASR");
+
+    e.asrThread = std::thread([&e, samples = std::move(samples)]() mutable {
+        const std::string modelDir = std::string(e.app->activity->internalDataPath) + "/jarvis-whisper-tiny";
+        mkdir(modelDir.c_str(), 0700);
+
+        const std::string encoderPath = modelDir + "/encoder.int8.onnx";
+        const std::string decoderPath = modelDir + "/decoder.int8.onnx";
+        const std::string tokensPath = modelDir + "/tokens.txt";
+
+        bool ready = copy_asset_to_file(e.app->activity->assetManager,
+                                        "sherpa-whisper-tiny/encoder.int8.onnx",
+                                        encoderPath) &&
+                     copy_asset_to_file(e.app->activity->assetManager,
+                                        "sherpa-whisper-tiny/decoder.int8.onnx",
+                                        decoderPath) &&
+                     copy_asset_to_file(e.app->activity->assetManager,
+                                        "sherpa-whisper-tiny/tokens.txt",
+                                        tokensPath);
+        if (!ready) {
+            set_status(e, "ASR MODEL FILE SETUP FAILED");
+            e.processing.store(false);
+            return;
+        }
+
+        set_status(e, "RUNNING OFFLINE SPEECH RECOGNITION");
+        sherpa_onnx::cxx::OfflineRecognizerConfig config;
+        config.feat_config.sample_rate = 16000;
+        config.feat_config.feature_dim = 80;
+        config.model_config.whisper.encoder = encoderPath;
+        config.model_config.whisper.decoder = decoderPath;
+        config.model_config.whisper.language = "";
+        config.model_config.whisper.task = "transcribe";
+        config.model_config.tokens = tokensPath;
+        config.model_config.num_threads = 2;
+        config.model_config.provider = "cpu";
+        config.decoding_method = "greedy_search";
+
+        auto recognizer = sherpa_onnx::cxx::OfflineRecognizer::Create(config);
+        if (!recognizer.Get()) {
+            set_status(e, "OFFLINE ASR MODEL FAILED TO LOAD");
+            e.processing.store(false);
+            return;
+        }
+
+        auto stream = recognizer.CreateStream();
+        stream.AcceptWaveform(e.capturedSampleRate, samples.data(),
+                              static_cast<int32_t>(samples.size()));
+        recognizer.Decode(&stream);
+        const auto result = recognizer.GetResult(&stream);
+        LOGI("Offline ASR transcript: %s", result.text.c_str());
+
+        const jarvis::Command command = jarvis::classify_command(result.text);
+        if (command == jarvis::Command::Unknown) {
+            set_status(e, result.text.empty() ? "NO SPEECH RECOGNIZED" : "SPEECH HEARD - NO COMMAND MATCH");
+        } else {
+            e.pendingCommand.store(static_cast<int>(command));
+            set_status(e, "VOICE COMMAND RECOGNIZED");
+        }
+        e.processing.store(false);
+    });
+}
+
 void start_audio(Engine& e) {
     if (!has_audio_permission(e)) {
         request_audio_permission(e);
@@ -309,9 +456,15 @@ void start_audio(Engine& e) {
         return;
     }
 
+    {
+        std::lock_guard<std::mutex> lock(e.audioMutex);
+        e.recordedSamples.clear();
+        e.recordedSamples.reserve(static_cast<size_t>(16000) * 60);
+    }
+
     AAudioStreamBuilder* builder = nullptr;
     if (AAudio_createStreamBuilder(&builder) != AAUDIO_OK) {
-        e.status = "AUDIO INPUT UNAVAILABLE";
+        set_status(e, "AUDIO INPUT UNAVAILABLE");
         return;
     }
     AAudioStreamBuilder_setDirection(builder, AAUDIO_DIRECTION_INPUT);
@@ -323,20 +476,21 @@ void start_audio(Engine& e) {
     const aaudio_result_t openResult = AAudioStreamBuilder_openStream(builder, &e.audioStream);
     AAudioStreamBuilder_delete(builder);
     if (openResult != AAUDIO_OK || !e.audioStream) {
-        e.status = "FAILED TO OPEN MICROPHONE";
+        set_status(e, "FAILED TO OPEN MICROPHONE");
         e.audioStream = nullptr;
         return;
     }
 
+    e.capturedSampleRate = AAudioStream_getSampleRate(e.audioStream);
     const aaudio_result_t startResult = AAudioStream_requestStart(e.audioStream);
     if (startResult != AAUDIO_OK) {
         stop_audio(e);
-        e.status = "MICROPHONE START FAILED";
+        set_status(e, "MICROPHONE START FAILED");
         return;
     }
 
     e.recording = true;
-    e.status = "AUDIO CAPTURE READY - ASR NOT ADDED";
+    set_status(e, "RECORDING - TAP MIC TO TRANSCRIBE");
     LOGI("Native AAudio input started");
 }
 
@@ -361,7 +515,7 @@ void launch_package(Engine& e, const char* packageName) {
             contextClass, "startActivity", "(Landroid/content/Intent;)V");
         env->CallVoidMethod(activity, startActivity, intent);
         clear_jni_exception(env);
-        e.status = std::string("OPENED ") + packageName;
+        set_status(e, std::string("OPENED ") + packageName);
         env->DeleteLocalRef(intent);
     } else {
         e.status = std::string("APP NOT INSTALLED: ") + packageName;
@@ -390,9 +544,9 @@ void change_volume(Engine& e, bool up) {
         clear_jni_exception(env);
         env->DeleteLocalRef(audioClass);
         env->DeleteLocalRef(audio);
-        e.status = up ? "MEDIA VOLUME INCREASED" : "MEDIA VOLUME DECREASED";
+        set_status(e, up ? "MEDIA VOLUME INCREASED" : "MEDIA VOLUME DECREASED");
     } else {
-        e.status = "VOLUME CONTROL UNAVAILABLE";
+        set_status(e, "VOLUME CONTROL UNAVAILABLE");
     }
 
     env->DeleteLocalRef(service);
@@ -414,10 +568,10 @@ void execute_command(Engine& e, jarvis::Command command) {
             change_volume(e, false);
             break;
         case jarvis::Command::OpenDialer:
-            e.status = "DIALER VOICE ACTION NOT YET CONNECTED";
+            set_status(e, "DIALER VOICE ACTION NOT YET CONNECTED");
             break;
         default:
-            e.status = "COMMAND NOT RECOGNIZED";
+            set_status(e, "COMMAND NOT RECOGNIZED");
             break;
     }
 }
@@ -436,7 +590,8 @@ int32_t handle_input(android_app* app, AInputEvent* event) {
     if (std::hypot(x-cx, y-cy) <= radius) {
         if (e->recording) {
             stop_audio(*e);
-            e->status = "MICROPHONE CAPTURE STOPPED - ASR PENDING";
+            set_status(*e, "MICROPHONE STOPPED - STARTING OFFLINE ASR");
+            start_transcription(*e);
         } else {
             start_audio(*e);
         }
@@ -462,7 +617,7 @@ void handle_cmd(android_app* app, int32_t cmd) {
     switch (cmd) {
         case APP_CMD_INIT_WINDOW:
             if (app->window && init_gl(*e)) draw_ui(*e);
-            else e->status = "OPENGL INITIALIZATION FAILED";
+            else set_status(*e, "OPENGL INITIALIZATION FAILED");
             break;
         case APP_CMD_TERM_WINDOW:
             shutdown_gl(*e);
@@ -498,10 +653,15 @@ void android_main(android_app* app) {
             if (ident >= 0 && source) source->process(app, source);
             if (app->destroyRequested) {
                 stop_audio(engine);
+                if (engine.asrThread.joinable()) engine.asrThread.join();
                 shutdown_gl(engine);
                 return;
             }
         } while (ident >= 0);
+        const int completedCommand = engine.pendingCommand.exchange(0);
+        if (completedCommand > 0) {
+            execute_command(engine, static_cast<jarvis::Command>(completedCommand));
+        }
         if (engine.display != EGL_NO_DISPLAY) draw_ui(engine);
     }
 }
