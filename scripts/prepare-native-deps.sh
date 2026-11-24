@@ -125,7 +125,7 @@ curl --fail --location --retry 3 "$HINDI_TTS_URL" -o "$TMP_DIR/hindi-tts.tar.bz2
 mkdir -p "$TMP_DIR/hindi-tts"
 tar -xjf "$TMP_DIR/hindi-tts.tar.bz2" -C "$TMP_DIR/hindi-tts"
 
-HINDI_TTS_MODEL="$(find "$TMP_DIR/hindi-tts" -type f -name 'hi_IN-rohan-medium-int8.onnx' -print -quit)"
+HINDI_TTS_MODEL="$(find "$TMP_DIR/hindi-tts" -type f -name 'hi_IN-rohan-medium.onnx' -print -quit)"
 HINDI_TTS_TOKENS="$(find "$TMP_DIR/hindi-tts" -type f -name 'tokens.txt' -print -quit)"
 if [[ -z "$HINDI_TTS_MODEL" || -z "$HINDI_TTS_TOKENS" ]]; then
   echo "Hindi Piper TTS package did not contain the expected model and tokens."
@@ -136,15 +136,11 @@ mkdir -p "$ROOT/app/src/main/assets/jarvis-tts"
 cp "$HINDI_TTS_MODEL" "$ROOT/app/src/main/assets/jarvis-tts/model.int8.onnx"
 cp "$HINDI_TTS_TOKENS" "$ROOT/app/src/main/assets/jarvis-tts/tokens.txt"
 
-echo "[JARVIS] Downloading bundled espeak-ng phoneme data"
-ESPEAK_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/espeak-ng-data.tar.bz2"
-curl --fail --location --retry 3 "$ESPEAK_URL" -o "$TMP_DIR/espeak-ng-data.tar.bz2"
-mkdir -p "$TMP_DIR/espeak"
-tar -xjf "$TMP_DIR/espeak-ng-data.tar.bz2" -C "$TMP_DIR/espeak"
-ESPEAK_PHONTAB="$(find "$TMP_DIR/espeak" -type f -name phontab -print -quit)"
+echo "[JARVIS] Reusing bundled espeak-ng phoneme data from the Hindi voice archive"
+ESPEAK_PHONTAB="$(find "$TMP_DIR/hindi-tts" -type f -path '*/espeak-ng-data/phontab' -print -quit)"
 if [[ -z "$ESPEAK_PHONTAB" ]]; then
-  echo "espeak-ng-data archive does not contain phontab."
-  find "$TMP_DIR/espeak" -type f | head -100
+  echo "Hindi voice archive does not contain its bundled espeak-ng-data/phontab."
+  find "$TMP_DIR/hindi-tts" -type f | grep -E 'phontab|\.onnx$|tokens' | head -100
   exit 1
 fi
 ESPEAK_DATA_DIR="$(dirname "$ESPEAK_PHONTAB")"
