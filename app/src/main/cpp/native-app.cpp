@@ -1223,6 +1223,7 @@ std::string jstring_to_utf8(JNIEnv* env, jstring value) {
 std::string normalize_contact_number(const std::string& value) {
     std::string digits;
     for (unsigned char ch : value) if (std::isdigit(ch)) digits.push_back(static_cast<char>(ch));
+    if (digits.rfind("00", 0) == 0) digits.erase(0, 2);
     if (digits.size() == 11 && digits.front() == '0') digits.erase(digits.begin());
     if (digits.size() == 10) digits = "91" + digits;
     return digits;
@@ -1318,20 +1319,29 @@ void open_whatsapp_contact(Engine& e, const std::string& query, const std::strin
         jmethodID close = env->GetMethodID(cursorClass, "close", "()V");
         const jint nameIndex = env->CallIntMethod(cursor, getColumnIndex, nameColumn);
         const jint numberIndex = env->CallIntMethod(cursor, getColumnIndex, numberColumn);
+        if (env->ExceptionCheck()) clear_jni_exception(env);
         const std::string needle = lower_contact_name(query);
-        while (env->CallBooleanMethod(cursor, moveToNext)) {
-            jstring nameValue = static_cast<jstring>(env->CallObjectMethod(cursor, getString, nameIndex));
-            jstring numberValue = static_cast<jstring>(env->CallObjectMethod(cursor, getString, numberIndex));
-            const std::string name = jstring_to_utf8(env, nameValue);
-            const std::string number = jstring_to_utf8(env, numberValue);
-            if (nameValue) env->DeleteLocalRef(nameValue);
-            if (numberValue) env->DeleteLocalRef(numberValue);
-            if (name.empty() || number.empty()) continue;
-            const std::string candidate = lower_contact_name(name);
-            if (candidate == needle) exact.push_back({name, number});
-            else if (candidate.find(needle) != std::string::npos) partial.push_back({name, number});
+        if (nameIndex >= 0 && numberIndex >= 0 && moveToNext && getString) {
+            while (true) {
+                const jboolean hasNext = env->CallBooleanMethod(cursor, moveToNext);
+                if (env->ExceptionCheck()) { clear_jni_exception(env); break; }
+                if (!hasNext) break;
+                jstring nameValue = static_cast<jstring>(env->CallObjectMethod(cursor, getString, nameIndex));
+                if (env->ExceptionCheck()) { clear_jni_exception(env); continue; }
+                jstring numberValue = static_cast<jstring>(env->CallObjectMethod(cursor, getString, numberIndex));
+                if (env->ExceptionCheck()) clear_jni_exception(env);
+                const std::string name = jstring_to_utf8(env, nameValue);
+                const std::string number = jstring_to_utf8(env, numberValue);
+                if (nameValue) env->DeleteLocalRef(nameValue);
+                if (numberValue) env->DeleteLocalRef(numberValue);
+                if (name.empty() || number.empty()) continue;
+                const std::string candidate = lower_contact_name(name);
+                if (candidate == needle) exact.push_back({name, number});
+                else if (candidate.find(needle) != std::string::npos) partial.push_back({name, number});
+            }
         }
-        env->CallVoidMethod(cursor, close);
+        if (close) env->CallVoidMethod(cursor, close);
+        if (env->ExceptionCheck()) clear_jni_exception(env);
         env->DeleteLocalRef(cursorClass);
     }
 
