@@ -84,7 +84,7 @@ std::string extract_contact_query(const std::string& raw) {
 std::string extract_contact_message(const std::string& raw) {
     const std::string text = lower_ascii(raw);
     const std::initializer_list<const char*> markers = {
-        " saying ", " with message ", " message: ", " text: ",
+        " saying ", " with message ", " message: ", " text: ", " kehna ", " bolna ", " bol do ", " tell him ",
         " कहना ", " बोलो ", " बोलना ", " संदेश ", " मैसेज ", " लिखो "
     };
     size_t start = std::string::npos;
@@ -138,8 +138,8 @@ Command classify_command(const std::string& raw) {
     const std::string text = lower_ascii(raw);
     if (!extract_contact_query(raw).empty()) return Command::OpenWhatsAppContact;
     if (!extract_youtube_query(raw).empty()) return Command::SearchYouTube;
-    if (contains_any(text, {"yes", "confirm", "send it", "haan bhejo", "han bhejo", "हाँ भेजो", "हां भेजो", "ठीक है भेजो"})) return Command::ConfirmPendingAction;
-    if (contains_any(text, {"no", "cancel", "mat bhejo", "मत भेजो", "नहीं भेजना", "रद्द करो"})) return Command::CancelPendingAction;
+    if (contains_any(text, {"yes", "haan", "han", "confirm", "send it", "haan bhejo", "han bhejo", "हाँ", "हां", "हाँ भेजो", "हां भेजो", "ठीक है भेजो"})) return Command::ConfirmPendingAction;
+    if (contains_any(text, {"no", "nahi", "nahin", "cancel", "mat bhejo", "मत भेजो", "नहीं", "नही", "नहीं भेजना", "रद्द करो"})) return Command::CancelPendingAction;
 
     if (contains_any(text, {"volume up", "increase volume", "turn up volume", "volume badhao",
                             "awaz badhao", "आवाज बढ़", "वॉल्यूम बढ़", "आवाज़ बढ़",
