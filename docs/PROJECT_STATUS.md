@@ -36,12 +36,12 @@ This is a conservative engineering estimate, not a measured runtime or device-te
 
 ## Current verified baseline
 
-- Latest clearly verified historical CI run: 45375534996
-- Verified commit: cc5b4b01c9b3dde01aacd164ff8d0c0c6ecd074a
-- That run passed native C++ command tests, Kotlin/Java-source guard, ARM64 Debug APK build and artifact upload.
-- Artifact: jarvis-android-debug-apk
-- Run: https://github.com/iGurpeetSingh/JARVIS-ANDROID/actions/runs/45375534996
-- Changes after that commit are not considered build-verified until their own GitHub Actions run succeeds.
+- Latest fully verified CI run: 45378872712
+- Verified commit: a24a55c543997bfc376a969fa78a433a2b7caebf
+- This run passed native C++ command tests, dependency preparation, Kotlin/Java-source guard, ARM64 Debug APK build and artifact upload.
+- Artifact: jarvis-android-debug-apk (artifact ID 14911564046; available until 2026-12-08)
+- Run: https://github.com/iGurpeetSingh/JARVIS-ANDROID/actions/runs/45378872712
+- Changes after this commit are not considered build-verified until their own GitHub Actions run succeeds.
 
 ## Recent implementation changes requiring new CI/device verification
 
@@ -54,7 +54,9 @@ This is a conservative engineering estimate, not a measured runtime or device-te
 7. Prevented arbitrary text from being sent to the LLM while a WhatsApp message confirmation is pending.
 8. Added SHA-256 verification for the downloaded Qwen3 GGUF file.
 9. Hardened contact cursor/index handling and international phone-number prefix normalization.
-10. Updated README to describe actual foreground limitations and the current implementations.
+10. Added free-storage and available-RAM guards for local Qwen setup/inference.
+11. Added a 30-case Motorola manual acceptance test checklist.
+12. Updated README to describe actual foreground limitations and the current implementations.
 
 ## Platform constraints and unresolved decisions
 
