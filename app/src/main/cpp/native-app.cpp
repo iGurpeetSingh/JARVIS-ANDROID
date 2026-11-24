@@ -1317,6 +1317,7 @@ void start_transcription(Engine& e) {
 }
 
 void start_audio(Engine& e) {
+    try {
     if (e.audioStream || e.recording.load()) return;
     if (e.edgeOverlayVisible) { set_edge_overlay(e, false); e.edgeOverlayVisible = false; }
     if (!e.hasWindowFocus.load() && !gVoiceServiceRunning.load(std::memory_order_acquire)) {
@@ -1385,6 +1386,15 @@ void start_audio(Engine& e) {
     e.kwsThread = std::thread(run_wake_word_engine, std::ref(e));
     set_status(e, "LISTENING FOR JARVIS");
     LOGI("Native AAudio wake-word listener started");
+    } catch (const std::exception& error) {
+        LOGE("Audio start failed with exception: %s", error.what());
+        stop_audio(e);
+        set_status(e, "MICROPHONE START FAILED - CHECK DEVICE PERMISSIONS");
+    } catch (...) {
+        LOGE("Audio start failed with an unknown exception");
+        stop_audio(e);
+        set_status(e, "MICROPHONE START FAILED - TAP TO RETRY");
+    }
 }
 
 void launch_package(Engine& e, const char* packageName) {
