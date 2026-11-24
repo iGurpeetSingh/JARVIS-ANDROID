@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <deque>
+#include <fstream>
 #include <utility>
 #include <mutex>
 #include <string>
@@ -15,6 +16,7 @@ llama_model* g_model = nullptr;
 llama_context* g_context = nullptr;
 const llama_vocab* g_vocab = nullptr;
 std::deque<std::pair<std::string, std::string>> g_history;
+constexpr const char* kQwenModelSha256 = "7af3fdf842f87b24672f8a7f1dd50404043f0bfb71093ff91c31d2b49df4631d";
 
 bool load_model_locked(const std::string& modelPath, std::string* error) {
     if (g_model && g_context && g_vocab) return true;
@@ -59,7 +61,11 @@ bool offline_llm_model_exists(const std::string& modelPath) {
     std::fseek(file, 0, SEEK_END);
     const long size = std::ftell(file);
     std::fclose(file);
-    return size > 450L * 1024L * 1024L;
+    if (size <= 450L * 1024L * 1024L) return false;
+    std::ifstream marker(modelPath + ".sha256", std::ios::in);
+    std::string verifiedHash;
+    std::getline(marker, verifiedHash);
+    return verifiedHash == kQwenModelSha256;
 }
 
 std::string offline_llm_generate(const std::string& modelPath,
