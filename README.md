@@ -93,3 +93,6 @@ Run 45375534996 successfully built and uploaded a debug APK for commit cc5b4b01c
 
 Repository: https://github.com/iGurpeetSingh/JARVIS-ANDROID
 Actions: https://github.com/iGurpeetSingh/JARVIS-ANDROID/actions
+
+Engineering progress: docs/PROJECT_STATUS.md
+Motorola acceptance tests: docs/MOTOROLA_DEVICE_QA.md
