@@ -1885,6 +1885,11 @@ void handle_cmd(android_app* app, int32_t cmd) {
 } // namespace
 
 void android_main(android_app* app) {
+    // Keep android_native_app_glue's ANativeActivity_onCreate entry point linked
+    // from the static archive. Without this reference some linkers can discard
+    // the glue object, causing NativeActivity to close immediately at launch.
+    app_dummy();
+
     Engine engine;
     engine.app = app;
     app->userData = &engine;
