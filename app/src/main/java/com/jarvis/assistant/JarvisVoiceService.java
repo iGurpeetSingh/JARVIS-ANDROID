@@ -78,6 +78,12 @@ public final class JarvisVoiceService extends Service {
     @Override public IBinder onBind(Intent intent) { return null; }
 
     @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        stopSelf();
+        super.onTaskRemoved(rootIntent);
+    }
+
+    @Override
     public void onDestroy() {
         if (edgeOverlay != null) edgeOverlay.hide();
         if (instance == this) instance = null;
