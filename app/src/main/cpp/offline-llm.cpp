@@ -20,7 +20,6 @@ bool load_model_locked(const std::string& modelPath, std::string* error) {
 
     llama_model_params modelParams = llama_model_default_params();
     modelParams.n_gpu_layers = 0;
-    modelParams.use_mmap = true;
 
     g_model = llama_model_load_from_file(modelPath.c_str(), modelParams);
     if (!g_model) {
