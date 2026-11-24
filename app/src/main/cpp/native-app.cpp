@@ -80,6 +80,7 @@ struct Engine {
     std::atomic<int> pendingCommand{0};
     std::string pendingContact;
     std::string pendingContactMessage;
+    std::string pendingOutboundMessage;
     std::string pendingRecipientName;
     std::string pendingRecipientPhone;
     std::atomic<bool> awaitingMessageConfirmation{false};
@@ -1379,7 +1380,7 @@ void open_whatsapp_contact(Engine& e, const std::string& query, const std::strin
     if (!message.empty()) {
         e.pendingRecipientName = matches.front().name;
         e.pendingRecipientPhone = phone;
-        e.pendingContactMessage = message;
+        e.pendingOutboundMessage = message;
         e.awaitingMessageConfirmation.store(true);
         set_status(e, "CONFIRM WHATSAPP MESSAGE BEFORE OPENING CHAT");
         speak_hindi_async(e, "क्या मैं " + matches.front().name + " को यह संदेश भेजने के लिए व्हाट्सऐप खोल दूँ? संदेश है: " + message + "। हाँ या नहीं बोलिए।");
@@ -1402,13 +1403,13 @@ void confirm_pending_whatsapp_message(Engine& e) {
     }
     const std::string name = e.pendingRecipientName;
     const std::string phone = e.pendingRecipientPhone;
-    const std::string message = e.pendingContactMessage;
+    const std::string message = e.pendingOutboundMessage;
     e.pendingRecipientName.clear();
     e.pendingRecipientPhone.clear();
-    e.pendingContactMessage.clear();
+    e.pendingOutboundMessage.clear();
     if (launch_whatsapp_chat(e, phone, message)) {
         set_status(e, "WHATSAPP MESSAGE READY - USER MUST TAP SEND");
-        speak_hindi_async(e, "" + name + " की चैट खुल गई है। संदेश तैयार है। भेजने के लिए आपको खुद सेंड दबाना होगा।");
+        speak_hindi_async(e, name + " की चैट खुल गई है। संदेश तैयार है। भेजने के लिए आपको खुद सेंड दबाना होगा।");
     } else {
         set_status(e, "WHATSAPP CHAT COULD NOT OPEN");
         speak_hindi_async(e, "व्हाट्सऐप चैट नहीं खुल सकी।");
@@ -1422,7 +1423,7 @@ void cancel_pending_whatsapp_message(Engine& e) {
     }
     e.pendingRecipientName.clear();
     e.pendingRecipientPhone.clear();
-    e.pendingContactMessage.clear();
+    e.pendingOutboundMessage.clear();
     set_status(e, "WHATSAPP MESSAGE CANCELLED");
     speak_hindi_async(e, "ठीक है, संदेश रद्द कर दिया है।");
 }
