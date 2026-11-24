@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -34,7 +35,7 @@
 #include <sys/statvfs.h>
 #include <sys/types.h>
 
-#define LOG_TAG "JARVIS_NATIVE"
+#define LOG_TAG "GURI_NATIVE"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
@@ -64,6 +65,8 @@ struct Engine {
     bool edgeOverlayVisible = false;
     bool voiceServicePending = false;
     bool voiceServiceStartRequested = false;
+    std::chrono::steady_clock::time_point voiceServiceStartTime{};
+    std::chrono::steady_clock::time_point nextVoiceServiceRetry{};
     bool overlaySettingsRequested = false;
     bool lastVoiceServiceRunning = false;
     bool jniAttachedByNativeThread = false;
@@ -300,7 +303,7 @@ void draw_ui(Engine& e) {
     glClear(GL_COLOR_BUFFER_BIT);
 
     draw_rect(e, 0, 0, e.width, e.height, 0.015f,0.035f,0.075f);
-    draw_text(e, "JARVIS", e.width*0.08f, e.height*0.07f, 6.0f, 0.92f,0.97f,1.0f);
+    draw_text(e, "G U R I", e.width*0.08f, e.height*0.07f, 6.0f, 0.92f,0.97f,1.0f);
     draw_text(e, "NATIVE C++ ASSISTANT", e.width*0.08f, e.height*0.13f, 2.8f, 0.25f,0.75f,0.95f);
 
     const float cx = e.width * 0.5f;
@@ -316,7 +319,7 @@ void draw_ui(Engine& e) {
     const float labelScale = std::max(2.0f, std::min(4.2f, e.width/100.0f));
     const std::string prompt = e.processing.load() ? "PROCESSING COMMAND" :
         (e.wakeDetected.load() ? "SPEAK YOUR COMMAND" :
-        (e.wakeListening.load() ? "SAY JARVIS" : "TAP TO LISTEN"));
+        (e.wakeListening.load() ? "SAY GURI" : "TAP TO LISTEN"));
     draw_text(e, prompt, (e.width - prompt.size()*4.0f*labelScale)/2.0f,
               e.height*0.65f, labelScale, 0.38f,0.85f,1.0f);
 
@@ -523,26 +526,40 @@ bool ensure_voice_service(Engine& e) {
     if (!e.hasWindowFocus.load()) return false;
     if (!has_audio_permission(e)) {
         if (!e.micPermissionPending.exchange(true)) request_audio_permission(e);
-        set_status(e, "ALLOW MICROPHONE PERMISSION FOR BACKGROUND JARVIS");
+        set_status(e, "ALLOW MICROPHONE PERMISSION FOR GURI");
         return false;
     }
     e.micPermissionPending.store(false);
+
+    // Overlay access controls only the RGB border. It must never block the
+    // microphone listener or make the assistant appear unusable.
     if (!has_overlay_permission(e)) {
         if (!e.overlaySettingsRequested) {
             e.overlaySettingsRequested = true;
-            set_status(e, "ALLOW DISPLAY OVER OTHER APPS FOR RGB EDGE LIGHT");
+            set_status(e, "OPTIONAL: ALLOW OVERLAY ACCESS FOR RGB EDGE LIGHT");
             request_overlay_permission(e);
         }
+    } else {
+        e.overlaySettingsRequested = false;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (e.voiceServiceStartRequested) {
+        if (now - e.voiceServiceStartTime < std::chrono::seconds(8)) return true;
+        e.voiceServiceStartRequested = false;
+        e.nextVoiceServiceRetry = now + std::chrono::seconds(3);
+        set_status(e, "GURI VOICE SERVICE START TIMED OUT - RETRYING");
         return false;
     }
-    e.overlaySettingsRequested = false;
-    if (e.voiceServiceStartRequested) return true;
+    if (now < e.nextVoiceServiceRetry) return false;
     if (!start_voice_service(e)) {
-        set_status(e, "BACKGROUND VOICE SERVICE COULD NOT START");
+        e.nextVoiceServiceRetry = now + std::chrono::seconds(3);
+        set_status(e, "GURI VOICE SERVICE COULD NOT START - WILL RETRY");
         return false;
     }
     e.voiceServiceStartRequested = true;
-    set_status(e, "STARTING BACKGROUND OFFLINE VOICE LISTENER");
+    e.voiceServiceStartTime = now;
+    set_status(e, "STARTING GURI OFFLINE VOICE LISTENER");
     return true;
 }
 
@@ -712,7 +729,7 @@ void run_wake_word_engine(Engine& e) {
     config.keywords_threshold = 0.25f;
     config.max_active_paths = 4;
 
-    set_status(e, "LOADING JARVIS WAKE WORD ENGINE");
+    set_status(e, "LOADING GURI WAKE WORD ENGINE");
     auto spotter = sherpa_onnx::cxx::KeywordSpotter::Create(config);
     if (!spotter.Get()) {
         set_status(e, "WAKE WORD MODEL FAILED TO LOAD");
@@ -724,7 +741,7 @@ void run_wake_word_engine(Engine& e) {
     auto stream = spotter.CreateStream();
     std::vector<float> chunk;
     chunk.reserve(1600);
-    set_status(e, "LISTENING FOR JARVIS");
+    set_status(e, "LISTENING FOR GURI");
 
     while (e.wakeListening.load()) {
         chunk.clear();
@@ -749,7 +766,7 @@ void run_wake_word_engine(Engine& e) {
                 e.wakeDetected.store(true, std::memory_order_release);
                 e.edgeOverlayPending.store(true, std::memory_order_release);
                 e.wakeListening.store(false);
-                set_status(e, "JARVIS HEARD - SPEAK COMMAND");
+                set_status(e, "GURI HEARD - SPEAK COMMAND");
                 e.kwsCondition.notify_all();
                 return;
             }
@@ -1324,13 +1341,13 @@ void start_audio(Engine& e) {
     if (e.audioStream || e.recording.load()) return;
     hide_edge_overlay(e);
     if (!e.hasWindowFocus.load() && !gVoiceServiceRunning.load(std::memory_order_acquire)) {
-        set_status(e, "MICROPHONE PAUSED - JARVIS IS NOT IN FOREGROUND");
+        set_status(e, "MICROPHONE PAUSED - GURI IS NOT IN FOREGROUND");
         return;
     }
     if (!has_audio_permission(e)) {
         e.micPermissionPending.store(true);
         request_audio_permission(e);
-        set_status(e, "ALLOW MIC PERMISSION TO START JARVIS");
+        set_status(e, "ALLOW MIC PERMISSION TO START GURI");
         return;
     }
     e.micPermissionPending.store(false);
@@ -1387,7 +1404,7 @@ void start_audio(Engine& e) {
 
     e.recording.store(true);
     e.kwsThread = std::thread(run_wake_word_engine, std::ref(e));
-    set_status(e, "LISTENING FOR JARVIS");
+    set_status(e, "LISTENING FOR GURI");
     LOGI("Native AAudio wake-word listener started");
     } catch (const std::exception& error) {
         LOGE("Audio start failed with exception: %s", error.what());
@@ -1841,7 +1858,7 @@ int32_t handle_input(android_app* app, AInputEvent* event) {
 
     if (std::hypot(x-cx, y-cy) <= radius) {
         if (e->speaking.load()) {
-            set_status(*e, "JARVIS IS SPEAKING");
+            set_status(*e, "GURI IS SPEAKING");
             return 1;
         }
         if (e->processing.load()) {
@@ -1890,7 +1907,7 @@ void handle_cmd(android_app* app, int32_t cmd) {
         case APP_CMD_GAINED_FOCUS:
             e->hasWindowFocus.store(true);
             if (gVoiceServiceRunning.load(std::memory_order_acquire)) e->autoWakePending.store(true);
-            else { e->voiceServicePending = true; e->voiceServiceStartRequested = false; }
+            else { e->voiceServicePending = true; }
             if (e->display != EGL_NO_DISPLAY) draw_ui(*e);
             break;
         case APP_CMD_WINDOW_RESIZED:
@@ -1974,12 +1991,23 @@ void android_main(android_app* app) {
         }
 
         const bool voiceServiceRunning = gVoiceServiceRunning.load(std::memory_order_acquire);
+        const auto voiceServiceNow = std::chrono::steady_clock::now();
         if (voiceServiceRunning && !engine.lastVoiceServiceRunning) {
+            engine.voiceServiceStartRequested = false;
+            engine.nextVoiceServiceRetry = std::chrono::steady_clock::time_point{};
             engine.autoWakePending.store(true);
         } else if (!voiceServiceRunning && engine.lastVoiceServiceRunning) {
             if (engine.recording.load()) stop_audio(engine);
             hide_edge_overlay(engine);
             engine.voiceServiceStartRequested = false;
+        } else if (!voiceServiceRunning && engine.voiceServiceStartRequested &&
+                   voiceServiceNow - engine.voiceServiceStartTime >= std::chrono::seconds(8)) {
+            // startForeground() can be rejected asynchronously inside Service.onCreate().
+            // Recover instead of leaving the app permanently stuck in "starting".
+            engine.voiceServiceStartRequested = false;
+            engine.voiceServicePending = engine.hasWindowFocus.load();
+            engine.nextVoiceServiceRetry = voiceServiceNow + std::chrono::seconds(3);
+            set_status(engine, "GURI VOICE SERVICE FAILED - RETRYING SAFELY");
         }
         engine.lastVoiceServiceRunning = voiceServiceRunning;
 
