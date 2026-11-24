@@ -55,12 +55,25 @@ public final class JarvisVoiceService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        instance = this;
         createNotificationChannel();
-        startVoiceForeground();
+
+        // A rejected microphone foreground-service start must not crash the
+        // NativeActivity process. Keep the failure visible in Logcat instead.
+        try {
+            startVoiceForeground();
+        } catch (RuntimeException error) {
+            android.util.Log.e("JARVIS_SERVICE",
+                    "Microphone foreground service could not start; check RECORD_AUDIO and Android FGS rules",
+                    error);
+            stopSelf();
+            return;
+        }
+
+        instance = this;
         edgeOverlay = new EdgeOverlay();
         try {
             nativeServiceStateChanged(true);
+            android.util.Log.i("JARVIS_SERVICE", "Background voice foreground service is active");
         } catch (UnsatisfiedLinkError error) {
             android.util.Log.e("JARVIS_SERVICE", "Cannot notify native voice engine", error);
         }
