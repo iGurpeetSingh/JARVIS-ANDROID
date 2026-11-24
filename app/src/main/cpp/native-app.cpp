@@ -539,7 +539,6 @@ void play_generated_audio(const sherpa_onnx::cxx::GeneratedAudio& generated) {
     AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_I16);
     AAudioStreamBuilder_setSampleRate(builder, AAUDIO_UNSPECIFIED);
     AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
-    AAudioStreamBuilder_setUsage(builder, AAUDIO_USAGE_MEDIA);
 
     AAudioStream* output = nullptr;
     const aaudio_result_t opened = AAudioStreamBuilder_openStream(builder, &output);
