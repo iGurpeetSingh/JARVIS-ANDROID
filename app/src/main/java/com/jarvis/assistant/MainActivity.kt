@@ -80,7 +80,8 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 response = lastResponse,
                 onMicClick = ::onMicClick,
                 onVolumeUp = { adjustVolume(true) },
-                onVolumeDown = { adjustVolume(false) }
+                onVolumeDown = { adjustVolume(false) },
+                onSettingsClick = { startActivity(Intent(this, SettingsActivity::class.java)) }
             )
         }
     }
@@ -221,7 +222,8 @@ private fun JarvisScreen(
     response: String,
     onMicClick: () -> Unit,
     onVolumeUp: () -> Unit,
-    onVolumeDown: () -> Unit
+    onVolumeDown: () -> Unit,
+    onSettingsClick: () -> Unit
 ) {
     val background = Brush.verticalGradient(
         listOf(Color(0xFF050B16), Color(0xFF0A1B30), Color(0xFF030711))
@@ -239,7 +241,7 @@ private fun JarvisScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text("JARVIS", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                    Button(onClick = { startActivity(Intent(this, SettingsActivity::class.java)) }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF123B5C))) { Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White); Text("Settings") }
+                    Button(onClick = onSettingsClick, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF123B5C))) { Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White); Text("Settings") }
                 }
                 Text("PERSONAL AI ASSISTANT", color = Color(0xFF72BFEA), fontSize = 11.sp, letterSpacing = 2.sp)
                 Spacer(modifier = Modifier.size(12.dp))
