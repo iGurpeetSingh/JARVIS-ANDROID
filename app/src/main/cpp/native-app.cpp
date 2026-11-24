@@ -728,54 +728,81 @@ bool download_model_file(Engine& e, const std::string& url, const std::string& p
     }
 
     bool success = false;
+    jobject connection = nullptr;
+    jobject input = nullptr;
     jclass urlClass = env->FindClass("java/net/URL");
-    jmethodID urlConstructor = env->GetMethodID(urlClass, "<init>", "(Ljava/lang/String;)V");
+    jmethodID urlConstructor = urlClass ? env->GetMethodID(urlClass, "<init>", "(Ljava/lang/String;)V") : nullptr;
     jstring urlText = env->NewStringUTF(url.c_str());
-    jobject urlObject = env->NewObject(urlClass, urlConstructor, urlText);
-    jmethodID openStream = env->GetMethodID(urlClass, "openStream", "()Ljava/io/InputStream;");
-    jobject input = env->CallObjectMethod(urlObject, openStream);
+    jobject urlObject = (urlConstructor && urlText) ? env->NewObject(urlClass, urlConstructor, urlText) : nullptr;
+    if (urlObject && !env->ExceptionCheck()) {
+        jmethodID openConnection = env->GetMethodID(urlClass, "openConnection", "()Ljava/net/URLConnection;");
+        connection = openConnection ? env->CallObjectMethod(urlObject, openConnection) : nullptr;
+    }
+    if (env->ExceptionCheck()) clear_jni_exception(env);
 
-    if (!env->ExceptionCheck() && input) {
+    jlong expectedBytes = -1;
+    if (connection) {
+        jclass connectionClass = env->GetObjectClass(connection);
+        jmethodID setConnectTimeout = env->GetMethodID(connectionClass, "setConnectTimeout", "(I)V");
+        jmethodID setReadTimeout = env->GetMethodID(connectionClass, "setReadTimeout", "(I)V");
+        jmethodID getContentLength = env->GetMethodID(connectionClass, "getContentLengthLong", "()J");
+        jmethodID getInputStream = env->GetMethodID(connectionClass, "getInputStream", "()Ljava/io/InputStream;");
+        if (setConnectTimeout) env->CallVoidMethod(connection, setConnectTimeout, 30000);
+        if (setReadTimeout) env->CallVoidMethod(connection, setReadTimeout, 45000);
+        if (getContentLength) expectedBytes = env->CallLongMethod(connection, getContentLength);
+        if (!env->ExceptionCheck() && getInputStream) input = env->CallObjectMethod(connection, getInputStream);
+        if (env->ExceptionCheck()) clear_jni_exception(env);
+        env->DeleteLocalRef(connectionClass);
+    }
+
+    if (input) {
         jclass inputClass = env->GetObjectClass(input);
         jmethodID readMethod = env->GetMethodID(inputClass, "read", "([BII)I");
         jmethodID closeMethod = env->GetMethodID(inputClass, "close", "()V");
-        jbyteArray bytes = env->NewByteArray(32768);
-        std::vector<jbyte> nativeBuffer(32768);
+        jbyteArray bytes = env->NewByteArray(65536);
+        std::vector<jbyte> nativeBuffer(65536);
         std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        int64_t receivedBytes = 0;
+        int lastProgress = -1;
 
-        if (output) {
+        if (output && readMethod && bytes) {
             while (true) {
-                const jint count = env->CallIntMethod(input, readMethod, bytes, 0, 32768);
+                const jint count = env->CallIntMethod(input, readMethod, bytes, 0, 65536);
                 if (env->ExceptionCheck()) {
                     clear_jni_exception(env);
                     break;
                 }
-                if (count < 0) {
-                    success = true;
-                    break;
-                }
+                if (count < 0) { success = true; break; }
                 if (count == 0) continue;
                 env->GetByteArrayRegion(bytes, 0, count, nativeBuffer.data());
-                if (env->ExceptionCheck()) {
-                    clear_jni_exception(env);
-                    break;
-                }
+                if (env->ExceptionCheck()) { clear_jni_exception(env); break; }
                 output.write(reinterpret_cast<const char*>(nativeBuffer.data()), count);
                 if (!output) break;
+                receivedBytes += count;
+
+                if (expectedBytes > 0) {
+                    const int progress = static_cast<int>((receivedBytes * 100) / expectedBytes);
+                    if (progress >= lastProgress + 5) {
+                        set_status(e, "DOWNLOADING OFFLINE AI: " + std::to_string(std::min(progress, 100)) + "%");
+                        lastProgress = progress;
+                    }
+                } else if (receivedBytes % (32LL * 1024LL * 1024LL) < count) {
+                    set_status(e, "DOWNLOADING OFFLINE AI: " + std::to_string(receivedBytes / (1024LL * 1024LL)) + " MB");
+                }
             }
             output.flush();
             success = success && output.good();
+            if (expectedBytes > 0 && receivedBytes != expectedBytes) success = false;
         }
 
-        env->CallVoidMethod(input, closeMethod);
-        clear_jni_exception(env);
+        if (closeMethod) env->CallVoidMethod(input, closeMethod);
+        if (env->ExceptionCheck()) clear_jni_exception(env);
         if (bytes) env->DeleteLocalRef(bytes);
         env->DeleteLocalRef(inputClass);
-    } else {
-        clear_jni_exception(env);
     }
 
     if (input) env->DeleteLocalRef(input);
+    if (connection) env->DeleteLocalRef(connection);
     if (urlObject) env->DeleteLocalRef(urlObject);
     if (urlText) env->DeleteLocalRef(urlText);
     if (urlClass) env->DeleteLocalRef(urlClass);
