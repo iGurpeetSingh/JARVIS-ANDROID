@@ -29,6 +29,7 @@
 #include <fstream>
 #include <functional>
 #include <utility>
+#include <exception>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/types.h>
@@ -488,7 +489,11 @@ bool start_voice_service(Engine& e) {
     }
     env->CallObjectMethod(activity, start, intent);
     const bool ok = !env->ExceptionCheck();
-    clear_jni_exception(env);
+    if (!ok) {
+        LOGE("Foreground voice service start failed; Android exception follows");
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
     env->DeleteLocalRef(contextClass); env->DeleteLocalRef(intent);
     env->DeleteLocalRef(intentClass); env->DeleteLocalRef(serviceClass);
     return ok;
@@ -665,6 +670,7 @@ bool copy_asset_tree(AAssetManager* manager, const std::string& assetPath,
     return ok;
 }
 void run_wake_word_engine(Engine& e) {
+    try {
     const std::string modelDir = std::string(e.app->activity->internalDataPath) + "/jarvis-kws";
     mkdir(modelDir.c_str(), 0700);
 
@@ -745,6 +751,19 @@ void run_wake_word_engine(Engine& e) {
                 return;
             }
         }
+    }
+    } catch (const std::exception& error) {
+        LOGE("Wake-word worker exception: %s", error.what());
+        set_status(e, "WAKE WORD ENGINE ERROR - TAP TO RETRY");
+        e.kwsFailed.store(true, std::memory_order_release);
+        e.wakeListening.store(false, std::memory_order_release);
+        e.kwsCondition.notify_all();
+    } catch (...) {
+        LOGE("Wake-word worker failed with an unknown exception");
+        set_status(e, "WAKE WORD ENGINE ERROR - TAP TO RETRY");
+        e.kwsFailed.store(true, std::memory_order_release);
+        e.wakeListening.store(false, std::memory_order_release);
+        e.kwsCondition.notify_all();
     }
 }
 
