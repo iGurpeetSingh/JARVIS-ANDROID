@@ -13,7 +13,9 @@ enum class Command {
     CancelPendingAction,
     OpenYouTube,
     SearchYouTube,
-    OpenDialer
+    OpenDialer,
+    OpenInstagram,
+    OpenFacebook
 };
 
 Command classify_command(const std::string& raw);

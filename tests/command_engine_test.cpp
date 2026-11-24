@@ -12,6 +12,11 @@ int main() {
     assert(jarvis::classify_command("volume kam karo") == Command::VolumeDown);
     assert(jarvis::classify_command("व्हाट्सएप खोलो") == Command::OpenWhatsApp);
     assert(jarvis::classify_command("youtube kholo") == Command::OpenYouTube);
+    assert(jarvis::classify_command("WhatsApp open") == Command::OpenWhatsApp);
+    assert(jarvis::classify_command("Instagram open") == Command::OpenInstagram);
+    assert(jarvis::classify_command("इंस्टाग्राम खोलो") == Command::OpenInstagram);
+    assert(jarvis::classify_command("Facebook open") == Command::OpenFacebook);
+    assert(jarvis::classify_command("फेसबुक खोलो") == Command::OpenFacebook);
     assert(jarvis::classify_command("फोन लगाओ") == Command::OpenDialer);
 
     const std::string english = jarvis::extract_contact_query("search for Pradeep");

@@ -39,6 +39,8 @@
 
 namespace {
 
+std::atomic<bool> gVoiceServiceRunning{false};
+
 constexpr const char* kVertexShader =
     "attribute vec2 aPosition; void main(){ gl_Position=vec4(aPosition,0.0,1.0); }";
 constexpr const char* kFragmentShader =
@@ -57,6 +59,12 @@ struct Engine {
     std::atomic<bool> recording{false};
     std::atomic<bool> hasWindowFocus{false};
     std::atomic<bool> audioDisconnected{false};
+    std::atomic<bool> edgeOverlayPending{false};
+    bool edgeOverlayVisible = false;
+    bool voiceServicePending = false;
+    bool voiceServiceStartRequested = false;
+    bool overlaySettingsRequested = false;
+    bool lastVoiceServiceRunning = false;
     std::string status = "NATIVE C++ CORE READY";
     AAudioStream* audioStream = nullptr;
     std::atomic<int> inputPeak{0};
@@ -387,6 +395,114 @@ void request_contacts_permission(Engine& e) {
     env->DeleteLocalRef(cls);
 }
 
+bool has_overlay_permission(Engine& e) {
+    if (e.app->activity->sdkVersion < 23) return true;
+    JNIEnv* env = e.app->activity->env;
+    jclass settings = env->FindClass("android/provider/Settings");
+    if (!settings) { clear_jni_exception(env); return false; }
+    jmethodID canDraw = env->GetStaticMethodID(settings, "canDrawOverlays", "(Landroid/content/Context;)Z");
+    if (!canDraw) { clear_jni_exception(env); env->DeleteLocalRef(settings); return false; }
+    const jboolean allowed = env->CallStaticBooleanMethod(settings, canDraw, e.app->activity->clazz);
+    clear_jni_exception(env);
+    env->DeleteLocalRef(settings);
+    return allowed == JNI_TRUE;
+}
+
+void request_overlay_permission(Engine& e) {
+    JNIEnv* env = e.app->activity->env;
+    jobject activity = e.app->activity->clazz;
+    jclass intentClass = env->FindClass("android/content/Intent");
+    jmethodID constructor = env->GetMethodID(intentClass, "<init>", "(Ljava/lang/String;)V");
+    jstring action = env->NewStringUTF("android.settings.action.MANAGE_OVERLAY_PERMISSION");
+    jobject intent = env->NewObject(intentClass, constructor, action);
+    jclass contextClass = env->GetObjectClass(activity);
+    jmethodID getPackageName = env->GetMethodID(contextClass, "getPackageName", "()Ljava/lang/String;");
+    jstring packageName = static_cast<jstring>(env->CallObjectMethod(activity, getPackageName));
+    const char* packageChars = env->GetStringUTFChars(packageName, nullptr);
+    const std::string packageUri = std::string("package:") + (packageChars ? packageChars : "");
+    if (packageChars) env->ReleaseStringUTFChars(packageName, packageChars);
+    jclass uriClass = env->FindClass("android/net/Uri");
+    jmethodID parse = env->GetStaticMethodID(uriClass, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
+    jstring uriText = env->NewStringUTF(packageUri.c_str());
+    jobject uri = env->CallStaticObjectMethod(uriClass, parse, uriText);
+    jmethodID setData = env->GetMethodID(intentClass, "setData", "(Landroid/net/Uri;)Landroid/content/Intent;");
+    env->CallObjectMethod(intent, setData, uri);
+    jmethodID startActivity = env->GetMethodID(contextClass, "startActivity", "(Landroid/content/Intent;)V");
+    env->CallVoidMethod(activity, startActivity, intent);
+    clear_jni_exception(env);
+    env->DeleteLocalRef(uri); env->DeleteLocalRef(uriText); env->DeleteLocalRef(uriClass);
+    env->DeleteLocalRef(packageName); env->DeleteLocalRef(contextClass);
+    env->DeleteLocalRef(intent); env->DeleteLocalRef(action); env->DeleteLocalRef(intentClass);
+}
+
+bool start_voice_service(Engine& e) {
+    JNIEnv* env = e.app->activity->env;
+    jobject activity = e.app->activity->clazz;
+    jclass serviceClass = env->FindClass("com/jarvis/assistant/JarvisVoiceService");
+    if (!serviceClass) { clear_jni_exception(env); return false; }
+    jclass intentClass = env->FindClass("android/content/Intent");
+    jmethodID constructor = env->GetMethodID(intentClass, "<init>", "(Landroid/content/Context;Ljava/lang/Class;)V");
+    jobject intent = env->NewObject(intentClass, constructor, activity, serviceClass);
+    jclass contextClass = env->GetObjectClass(activity);
+    jmethodID start = nullptr;
+    if (e.app->activity->sdkVersion >= 26) {
+        start = env->GetMethodID(contextClass, "startForegroundService", "(Landroid/content/Intent;)Landroid/content/ComponentName;");
+    } else {
+        start = env->GetMethodID(contextClass, "startService", "(Landroid/content/Intent;)Landroid/content/ComponentName;");
+    }
+    if (!start) {
+        clear_jni_exception(env);
+        env->DeleteLocalRef(contextClass); env->DeleteLocalRef(intent);
+        env->DeleteLocalRef(intentClass); env->DeleteLocalRef(serviceClass);
+        return false;
+    }
+    env->CallObjectMethod(activity, start, intent);
+    const bool ok = !env->ExceptionCheck();
+    clear_jni_exception(env);
+    env->DeleteLocalRef(contextClass); env->DeleteLocalRef(intent);
+    env->DeleteLocalRef(intentClass); env->DeleteLocalRef(serviceClass);
+    return ok;
+}
+
+void set_edge_overlay(Engine& e, bool visible) {
+    JNIEnv* env = e.app->activity->env;
+    jclass serviceClass = env->FindClass("com/jarvis/assistant/JarvisVoiceService");
+    if (!serviceClass) { clear_jni_exception(env); return; }
+    jmethodID method = env->GetStaticMethodID(serviceClass, "setEdgeVisible", "(Z)V");
+    if (method) env->CallStaticVoidMethod(serviceClass, method, visible ? JNI_TRUE : JNI_FALSE);
+    clear_jni_exception(env);
+    env->DeleteLocalRef(serviceClass);
+}
+
+bool ensure_voice_service(Engine& e) {
+    if (gVoiceServiceRunning.load(std::memory_order_acquire)) return true;
+    if (!e.hasWindowFocus.load()) return false;
+    if (!has_audio_permission(e)) {
+        if (!e.micPermissionPending.exchange(true)) request_audio_permission(e);
+        set_status(e, "ALLOW MICROPHONE PERMISSION FOR BACKGROUND JARVIS");
+        return false;
+    }
+    e.micPermissionPending.store(false);
+    if (!has_overlay_permission(e)) {
+        if (!e.overlaySettingsRequested) {
+            e.overlaySettingsRequested = true;
+            set_status(e, "ALLOW DISPLAY OVER OTHER APPS FOR RGB EDGE LIGHT");
+            request_overlay_permission(e);
+        }
+        return false;
+    }
+    e.overlaySettingsRequested = false;
+    if (e.voiceServiceStartRequested) return true;
+    if (!start_voice_service(e)) {
+        set_status(e, "BACKGROUND VOICE SERVICE COULD NOT START");
+        return false;
+    }
+    e.voiceServiceStartRequested = true;
+    set_status(e, "STARTING BACKGROUND OFFLINE VOICE LISTENER");
+    return true;
+}
+
+
 void audio_error_callback(AAudioStream*, void* userData, aaudio_result_t error) {
     auto* e = static_cast<Engine*>(userData);
     if (!e) return;
@@ -586,6 +702,7 @@ void run_wake_word_engine(Engine& e) {
             if (!result.keyword.empty()) {
                 LOGI("Wake phrase detected: %s", result.keyword.c_str());
                 e.wakeDetected.store(true, std::memory_order_release);
+                e.edgeOverlayPending.store(true, std::memory_order_release);
                 e.wakeListening.store(false);
                 set_status(e, "JARVIS HEARD - SPEAK COMMAND");
                 e.kwsCondition.notify_all();
@@ -1047,6 +1164,7 @@ void start_transcription(Engine& e) {
 
     if (samples.size() < 4000) {
         set_status(e, "TOO SHORT - SPEAK FOR 1 SECOND");
+        if (e.edgeOverlayVisible) { set_edge_overlay(e, false); e.edgeOverlayVisible = false; }
         return;
     }
 
@@ -1145,7 +1263,8 @@ void start_transcription(Engine& e) {
 
 void start_audio(Engine& e) {
     if (e.audioStream || e.recording.load()) return;
-    if (!e.hasWindowFocus.load()) {
+    if (e.edgeOverlayVisible) { set_edge_overlay(e, false); e.edgeOverlayVisible = false; }
+    if (!e.hasWindowFocus.load() && !gVoiceServiceRunning.load(std::memory_order_acquire)) {
         set_status(e, "MICROPHONE PAUSED - JARVIS IS NOT IN FOREGROUND");
         return;
     }
@@ -1214,6 +1333,7 @@ void start_audio(Engine& e) {
 }
 
 void launch_package(Engine& e, const char* packageName) {
+    if (e.edgeOverlayVisible) { set_edge_overlay(e, false); e.edgeOverlayVisible = false; }
     JNIEnv* env = e.app->activity->env;
     jobject activity = e.app->activity->clazz;
     jclass contextClass = env->GetObjectClass(activity);
@@ -1569,6 +1689,7 @@ bool open_external_url(Engine& e, const std::string& url, const char* packageNam
 }
 
 void execute_command(Engine& e, jarvis::Command command, const std::string& contactQuery = {}, const std::string& contactMessage = {}, const std::string& youtubeQuery = {}) {
+    if (e.edgeOverlayVisible) { set_edge_overlay(e, false); e.edgeOverlayVisible = false; }
     switch (command) {
         case jarvis::Command::OpenWhatsAppContact:
             open_whatsapp_contact(e, contactQuery, contactMessage);
@@ -1586,6 +1707,14 @@ void execute_command(Engine& e, jarvis::Command command, const std::string& cont
         case jarvis::Command::OpenYouTube:
             launch_package(e, "com.google.android.youtube");
             speak_hindi_async(e, "यूट्यूब खोल रहा हूँ।");
+            break;
+        case jarvis::Command::OpenInstagram:
+            launch_package(e, "com.instagram.android");
+            speak_hindi_async(e, "इंस्टाग्राम खोल रहा हूँ।");
+            break;
+        case jarvis::Command::OpenFacebook:
+            launch_package(e, "com.facebook.katana");
+            speak_hindi_async(e, "फेसबुक खोल रहा हूँ।");
             break;
         case jarvis::Command::SearchYouTube: {
             const std::string query = youtubeQuery.empty() ? "trending videos" : youtubeQuery;
@@ -1678,7 +1807,8 @@ void handle_cmd(android_app* app, int32_t cmd) {
             break;
         case APP_CMD_GAINED_FOCUS:
             e->hasWindowFocus.store(true);
-            e->autoWakePending.store(true);
+            if (gVoiceServiceRunning.load(std::memory_order_acquire)) e->autoWakePending.store(true);
+            else { e->voiceServicePending = true; e->voiceServiceStartRequested = false; }
             if (e->display != EGL_NO_DISPLAY) draw_ui(*e);
             break;
         case APP_CMD_WINDOW_RESIZED:
@@ -1690,11 +1820,13 @@ void handle_cmd(android_app* app, int32_t cmd) {
             break;
         case APP_CMD_LOST_FOCUS:
             e->hasWindowFocus.store(false);
-            e->autoWakePending.store(false);
-            e->restartWake.store(false);
-            if (e->recording.load()) {
-                stop_audio(*e);
-                set_status(*e, "WAKE LISTENER PAUSED - APP NOT IN FOREGROUND");
+            if (!gVoiceServiceRunning.load(std::memory_order_acquire)) {
+                e->autoWakePending.store(false);
+                e->restartWake.store(false);
+                if (e->recording.load()) stop_audio(*e);
+                set_status(*e, "VOICE LISTENER PAUSED - BACKGROUND SERVICE NOT ACTIVE");
+            } else {
+                set_status(*e, "BACKGROUND OFFLINE VOICE LISTENER ACTIVE");
             }
             break;
         default:
@@ -1714,7 +1846,7 @@ void android_main(android_app* app) {
     while (true) {
         int events = 0;
         android_poll_source* source = nullptr;
-        const int timeout = engine.display == EGL_NO_DISPLAY ? -1 : 50;
+        const int timeout = (engine.display == EGL_NO_DISPLAY && !gVoiceServiceRunning.load(std::memory_order_acquire)) ? -1 : 50;
         int ident = ALOOPER_POLL_TIMEOUT;
         do {
             ident = ALooper_pollOnce(timeout, nullptr, &events,
@@ -1744,27 +1876,42 @@ void android_main(android_app* app) {
             set_status(engine, "LOW MEMORY - IDLE AI MODELS RELEASED");
         }
 
+        if (engine.voiceServicePending && engine.hasWindowFocus.load()) {
+            if (ensure_voice_service(engine)) engine.voiceServicePending = false;
+        }
+
+        const bool voiceServiceRunning = gVoiceServiceRunning.load(std::memory_order_acquire);
+        if (voiceServiceRunning && !engine.lastVoiceServiceRunning) {
+            engine.autoWakePending.store(true);
+        } else if (!voiceServiceRunning && engine.lastVoiceServiceRunning) {
+            if (engine.recording.load()) stop_audio(engine);
+            if (engine.edgeOverlayVisible) { set_edge_overlay(engine, false); engine.edgeOverlayVisible = false; }
+            engine.voiceServiceStartRequested = false;
+        }
+        engine.lastVoiceServiceRunning = voiceServiceRunning;
+
+        if (engine.edgeOverlayPending.exchange(false) && voiceServiceRunning && !engine.edgeOverlayVisible) {
+            set_edge_overlay(engine, true);
+            engine.edgeOverlayVisible = true;
+        }
+
         if (engine.audioDisconnected.exchange(false)) {
             stop_audio(engine);
             set_status(engine, "AUDIO ROUTE DISCONNECTED - RESTARTING LISTENER");
-            if (engine.hasWindowFocus.load()) engine.autoWakePending.store(true);
+            if (engine.hasWindowFocus.load() || voiceServiceRunning) engine.autoWakePending.store(true);
         }
 
         if (engine.kwsFailed.exchange(false)) {
             stop_audio(engine);
         }
 
-        if (engine.autoWakePending.exchange(false) && engine.hasWindowFocus.load() &&
+        if (engine.autoWakePending.exchange(false) &&
+            (engine.hasWindowFocus.load() || gVoiceServiceRunning.load(std::memory_order_acquire)) &&
             !engine.recording.load() &&
             !engine.processing.load() && !engine.speaking.load() && !engine.modelDownloading.load()) {
             start_audio(engine);
         }
 
-        if (engine.micPermissionPending.load() && engine.hasWindowFocus.load() &&
-            has_audio_permission(engine) && !engine.recording.load() && !engine.processing.load()) {
-            engine.micPermissionPending.store(false);
-            start_audio(engine);
-        }
 
         if (engine.commandReady.exchange(false) && engine.recording.load()) {
             stop_audio(engine);
@@ -1773,6 +1920,7 @@ void android_main(android_app* app) {
         }
 
         if (engine.pendingLlmQuery.exchange(false)) {
+            if (engine.edgeOverlayVisible) { set_edge_overlay(engine, false); engine.edgeOverlayVisible = false; }
             const std::string question = engine.pendingQuestion;
             engine.pendingQuestion.clear();
             start_offline_llm_reply(engine, question);
@@ -1789,7 +1937,8 @@ void android_main(android_app* app) {
             execute_command(engine, static_cast<jarvis::Command>(completedCommand), contact, message, youtube);
         }
 
-        if (engine.restartWake.exchange(false) && engine.hasWindowFocus.load() &&
+        if (engine.restartWake.exchange(false) &&
+            (engine.hasWindowFocus.load() || gVoiceServiceRunning.load(std::memory_order_acquire)) &&
             !engine.processing.load() && !engine.llmProcessing.load() && !engine.speaking.load() &&
             !engine.recording.load() && !engine.shuttingDown.load() &&
             !app->destroyRequested) {
@@ -1798,4 +1947,10 @@ void android_main(android_app* app) {
 
         if (engine.display != EGL_NO_DISPLAY) draw_ui(engine);
     }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_jarvis_assistant_JarvisVoiceService_nativeServiceStateChanged(
+    JNIEnv*, jclass, jboolean running) {
+    gVoiceServiceRunning.store(running == JNI_TRUE, std::memory_order_release);
 }

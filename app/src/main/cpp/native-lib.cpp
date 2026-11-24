@@ -193,6 +193,12 @@ Command classify_command(const std::string& raw) {
                             "आवाज धीमी", "आवाज़ धीमी"})) {
         return Command::VolumeDown;
     }
+    if (contains_any(text, {"instagram", "इंस्टाग्राम", "इन्स्टाग्राम", "instagram kholo", "instagram open"})) {
+        return Command::OpenInstagram;
+    }
+    if (contains_any(text, {"facebook", "फेसबुक", "फेसबुक खोल", "facebook kholo", "facebook open"})) {
+        return Command::OpenFacebook;
+    }
     if (contains_any(text, {"whatsapp", "व्हाट्सएप", "व्हाट्स ऐप", "व्हाट्सएप खोल",
                             "व्हाट्सऐप खोल", "whatsapp kholo", "whatsapp open"})) {
         return Command::OpenWhatsApp;
