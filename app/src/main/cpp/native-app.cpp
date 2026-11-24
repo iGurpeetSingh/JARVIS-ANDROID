@@ -531,17 +531,8 @@ bool ensure_voice_service(Engine& e) {
     }
     e.micPermissionPending.store(false);
 
-    // Overlay access controls only the RGB border. It must never block the
-    // microphone listener or make the assistant appear unusable.
-    if (!has_overlay_permission(e)) {
-        if (!e.overlaySettingsRequested) {
-            e.overlaySettingsRequested = true;
-            set_status(e, "OPTIONAL: ALLOW OVERLAY ACCESS FOR RGB EDGE LIGHT");
-            request_overlay_permission(e);
-        }
-    } else {
-        e.overlaySettingsRequested = false;
-    }
+    const bool overlayAllowed = has_overlay_permission(e);
+    if (overlayAllowed) e.overlaySettingsRequested = false;
 
     const auto now = std::chrono::steady_clock::now();
     if (e.voiceServiceStartRequested) {
@@ -557,9 +548,19 @@ bool ensure_voice_service(Engine& e) {
         set_status(e, "GURI VOICE SERVICE COULD NOT START - WILL RETRY");
         return false;
     }
+
     e.voiceServiceStartRequested = true;
     e.voiceServiceStartTime = now;
     set_status(e, "STARTING GURI OFFLINE VOICE LISTENER");
+
+    // Open Android's overlay settings only after requesting the microphone
+    // foreground service, so the optional visual effect cannot block or
+    // prevent the required foreground-service start.
+    if (!overlayAllowed && !e.overlaySettingsRequested) {
+        e.overlaySettingsRequested = true;
+        set_status(e, "VOICE LISTENER STARTING - OPTIONAL RGB OVERLAY ACCESS");
+        request_overlay_permission(e);
+    }
     return true;
 }
 
