@@ -351,7 +351,12 @@ jclass load_application_class(Engine& e, const char* dottedName);
 
 void request_runtime_permission(Engine& e, const char* permissionName, jint requestCode) {
     JNIEnv* env = current_jni_env(e);
-    if (!env) return;
+    if (!env) {
+        LOGE("No JNI environment available for runtime permission request");
+        return;
+    }
+    LOGI("Scheduling runtime permission request: %s (request code %d) on Android UI thread",
+         permissionName, requestCode);
     jclass bridgeClass = load_application_class(e, "com.jarvis.assistant.NativePermissionBridge");
     if (!bridgeClass) {
         LOGE("Could not load runtime permission bridge");
