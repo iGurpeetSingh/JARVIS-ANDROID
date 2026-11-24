@@ -28,21 +28,25 @@ namespace jarvis {
 Command classify_command(const std::string& raw) {
     const std::string text = lower_ascii(raw);
 
-    if (contains_any(text, {"volume up", "increase volume", "आवाज बढ़",
-                            "वॉल्यूम बढ़", "आवाज़ बढ़"})) {
+    if (contains_any(text, {"volume up", "increase volume", "turn up volume", "volume badhao",
+                            "awaz badhao", "आवाज बढ़", "वॉल्यूम बढ़", "आवाज़ बढ़",
+                            "आवाज तेज", "आवाज़ तेज", "आवाज़ ऊँची"})) {
         return Command::VolumeUp;
     }
-    if (contains_any(text, {"volume down", "decrease volume", "आवाज कम",
-                            "वॉल्यूम कम", "आवाज़ कम"})) {
+    if (contains_any(text, {"volume down", "decrease volume", "turn down volume", "volume kam karo",
+                            "awaz kam", "आवाज कम", "वॉल्यूम कम", "आवाज़ कम",
+                            "आवाज धीमी", "आवाज़ धीमी"})) {
         return Command::VolumeDown;
     }
-    if (contains_any(text, {"whatsapp", "व्हाट्सएप", "व्हाट्स ऐप"})) {
+    if (contains_any(text, {"whatsapp", "व्हाट्सएप", "व्हाट्स ऐप", "व्हाट्सएप खोल",
+                            "व्हाट्सऐप खोल", "whatsapp kholo", "whatsapp open"})) {
         return Command::OpenWhatsApp;
     }
-    if (contains_any(text, {"youtube", "यूट्यूब"})) {
+    if (contains_any(text, {"youtube", "यूट्यूब", "youtube kholo", "youtube open", "यूट्यूब खोल"})) {
         return Command::OpenYouTube;
     }
-    if (contains_any(text, {"call", "कॉल", "फोन लगाओ", "डायलर खोल"})) {
+    if (contains_any(text, {"call", "कॉल", "फोन लगाओ", "डायलर खोल", "phone kholo",
+                            "open dialer", "dialer kholo"})) {
         return Command::OpenDialer;
     }
     return Command::Unknown;
