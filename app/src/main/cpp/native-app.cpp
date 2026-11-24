@@ -938,17 +938,17 @@ bool download_model_file(Engine& e, const std::string& url, const std::string& p
 
 void start_offline_model_setup(Engine& e) {
     const std::string modelPath = local_llm_model_path(e);
+    if (jarvis::offline_llm_model_exists(modelPath)) {
+        e.localModelReady.store(true);
+        set_status(e, "OFFLINE AI MODEL ALREADY INSTALLED");
+        speak_hindi_async(e, "ऑफलाइन ए आई मॉडल पहले से तैयार है।");
+        return;
+    }
     const std::string appDataDirectory = e.app->activity->internalDataPath;
     constexpr uint64_t requiredStorage = 550ULL * 1024ULL * 1024ULL;
     if (available_storage_bytes(appDataDirectory) < requiredStorage) {
         set_status(e, "NOT ENOUGH STORAGE - NEED ABOUT 550 MB FREE");
         speak_hindi_async(e, "ऑफलाइन ए आई डाउनलोड करने के लिए कम से कम पाँच सौ पचास एमबी खाली स्टोरेज चाहिए।");
-        return;
-    }
-    if (jarvis::offline_llm_model_exists(modelPath)) {
-        e.localModelReady.store(true);
-        set_status(e, "OFFLINE AI MODEL ALREADY INSTALLED");
-        speak_hindi_async(e, "ऑफलाइन ए आई मॉडल पहले से तैयार है।");
         return;
     }
 
