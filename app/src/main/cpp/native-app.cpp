@@ -6,6 +6,7 @@
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
 #include <jni.h>
+#include "command_engine.h"
 
 #include <algorithm>
 #include <array>
@@ -480,7 +481,6 @@ void handle_cmd(android_app* app, int32_t cmd) {
 } // namespace
 
 void android_main(android_app* app) {
-    app_dummy();
     Engine engine;
     engine.app = app;
     app->userData = &engine;
@@ -491,15 +491,17 @@ void android_main(android_app* app) {
         int events = 0;
         android_poll_source* source = nullptr;
         const int timeout = engine.display == EGL_NO_DISPLAY ? -1 : 50;
-        while (ALooper_pollAll(timeout, nullptr, &events,
-                              reinterpret_cast<void**>(&source)) >= 0) {
-            if (source) source->process(app, source);
+        int ident = ALOOPER_POLL_TIMEOUT;
+        do {
+            ident = ALooper_pollOnce(timeout, nullptr, &events,
+                                     reinterpret_cast<void**>(&source));
+            if (ident >= 0 && source) source->process(app, source);
             if (app->destroyRequested) {
                 stop_audio(engine);
                 shutdown_gl(engine);
                 return;
             }
-        }
+        } while (ident >= 0);
         if (engine.display != EGL_NO_DISPLAY) draw_ui(engine);
     }
 }
