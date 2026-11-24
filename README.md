@@ -1,6 +1,6 @@
-# JARVIS-ANDROID — Native C++ Android AI Assistant
+# G U R I — Native C++ Android AI Assistant
 
-JARVIS is a voice-first Android assistant built with native C++17, Android NDK, NativeActivity and CMake. The application logic, dashboard, voice pipeline, command routing and AI orchestration remain in C++.
+G U R I is a voice-first Android assistant built with native C++17, Android NDK, NativeActivity and CMake. The application logic, dashboard, voice pipeline, command routing and AI orchestration remain in C++.
 
 ## Non-negotiable architecture
 
@@ -20,7 +20,7 @@ JARVIS is a voice-first Android assistant built with native C++17, Android NDK, 
 ### Voice pipeline
 
 - Foreground focus requests microphone permission and starts the native wake-word listener once permission is granted.
-- Streaming keyword spotting is configured for JARVIS and HEY JARVIS.
+- Streaming keyword spotting is configured for GURI and HEY GURI.
 - After wake detection, a VAD-style RMS/silence gate captures the spoken command.
 - Capture stops after approximately 0.9 seconds of silence after speech, or a 10-second command safety limit.
 - Whisper Tiny multilingual runs locally for Hindi, English and Hinglish speech-to-text.
@@ -33,7 +33,7 @@ JARVIS is a voice-first Android assistant built with native C++17, Android NDK, 
 - Search contacts through Android Contacts Provider.
 - Exact and partial name matching, with duplicate matches requiring the user to say a more specific name.
 - Open a WhatsApp chat without sending anything.
-- Prepare a requested WhatsApp message only after JARVIS reads back the contact and text and receives a verbal yes/confirmation.
+- Prepare a requested WhatsApp message only after GURI reads back the contact and text and receives a verbal yes/confirmation.
 - The final Send action remains manual inside WhatsApp; JARVIS does not silently send messages.
 - Open YouTube and search YouTube using parsed Hindi, Hinglish or English queries.
 - Open the phone dialer without placing a call.
@@ -58,7 +58,7 @@ JARVIS is a voice-first Android assistant built with native C++17, Android NDK, 
 
 ## Current platform limitation
 
-The current architecture uses NativeActivity and does not include an Android Service component. Therefore wake-word listening is foreground-only. When JARVIS loses foreground focus, audio capture is stopped. It is not a screen-off or persistent background assistant. A fully backgrounded Android foreground service has a platform component requirement that conflicts with the project's strict C++-only application-source requirement. Do not silently add Kotlin/Java to bypass this.
+The app uses NativeActivity for its native C++ audio/AI engine and a small Java foreground-service bridge for Android microphone-service compliance and RGB edge overlays. The foreground service must be started while the app is visible and after microphone permission is granted. Overlay permission is optional for voice commands; it is required only for the RGB edge light. Removing the app task from Recents stops the service because the native engine is owned by the Activity. This is not a device-reboot auto-start service.
 
 ## Build requirements
 
