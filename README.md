@@ -1,45 +1,50 @@
-# JARVIS-ANDROID
+# JARVIS-ANDROID — Native C++ Android App
 
-A native Android assistant project using **C++ for the command-processing core** and **Kotlin for Android framework integration and the Compose interface**.
+The application layer is being migrated to a **native C++17 Android application**. Kotlin source, Kotlin Gradle plugin, Jetpack Compose and AndroidX Compose dependencies have been removed from the app.
 
-## Language and architecture
+## Current native architecture
 
-- **C++17 (Android NDK + CMake):** native command classifier compiled as `libjarvis_native.so`.
-- **JNI:** Kotlin calls the native C++ command engine through `NativeCommandEngine`.
-- **Kotlin:** Android activity lifecycle, microphone permission, Android SpeechRecognizer/TextToSpeech integration, launching apps, dialer and volume controls.
-- **Jetpack Compose:** Android dashboard and settings UI.
+- **C++17 + Android NDK + CMake:** application entry point, interface rendering, command classification and native microphone capture.
+- **Android NativeActivity + NDK native_app_glue:** Android lifecycle and input integration without an app-authored Kotlin or Java Activity.
+- **OpenGL ES 2.0:** native C++ dashboard rendering.
+- **AAudio:** native microphone PCM input capture.
+- **JNI calls from C++:** invoke required Android framework services such as microphone permission and launching installed Android apps / media volume controls.
+- **Groovy Gradle files:** build configuration only. Gradle is still required to package an Android APK; it is not Kotlin application code.
 
-## Implemented
+## Included in this migration
 
-- Dark JARVIS-inspired dashboard with tap-to-talk microphone control.
-- Hindi locale requested from Android SpeechRecognizer; recognition quality and language support depend on the device's speech service.
-- Hindi TextToSpeech attempt with English fallback.
-- Native C++ command classification for volume up/down, opening WhatsApp, opening YouTube and opening the dialer.
-- Kotlin executes the selected Android system action after C++ returns a command ID.
-- AUTO / ONLINE / OFFLINE preference screen and basic validated-network detection/routing helper.
-- GitHub Actions installs Android NDK and CMake, builds the native library and packages a debug APK.
+- C++ NativeActivity launcher and OpenGL dashboard.
+- C++ microphone input capture using AAudio after runtime permission is granted.
+- C++ buttons to launch installed WhatsApp and YouTube apps.
+- C++ Android AudioManager bridge for media volume adjustment.
+- C++ command classifier source for Hindi/English command phrases.
+- CI check that fails if Kotlin/Java app source or Kotlin/Compose Gradle dependencies are reintroduced.
 
-## Not yet implemented
+## Not yet complete
 
-- Always-on wake word and background listening service.
-- Native C++ audio capture, acoustic feature extraction, wake-word model or offline speech recognition.
-- Local/offline LLM runtime and model download/management.
-- Online AI provider connection. No API key or paid provider is bundled.
-- AUTO mode does not yet execute an online provider or local LLM; current routing is only a foundation.
-- WhatsApp accessibility automation, contact disambiguation, chat opening and message sending. Currently JARVIS only launches WhatsApp.
-- YouTube voice search and physical Motorola device QA.
+- Microphone capture is implemented, but speech-to-text (ASR) is **not yet connected**. The mic button currently starts/stops audio capture; it does not transcribe speech or execute spoken commands yet.
+- The C++ command classifier is implemented but still needs to be connected to an ASR transcript pipeline.
+- No always-on wake-word model or background listening service yet.
+- No offline LLM runtime or model manager yet.
+- No online AI provider yet.
+- WhatsApp contact lookup, ambiguity handling and message sending are not yet implemented.
+- No Motorola physical-device verification has been performed.
+- The present UI is a basic native OpenGL dashboard, not a final visual recreation of the earlier Compose dashboard.
 
 ## Build
 
-GitHub Actions runs `gradle --no-daemon :app:assembleDebug` with Android NDK `27.2.12479018` and CMake `3.22.1`, then uploads `app/build/outputs/apk/debug/app-debug.apk` as the `jarvis-android-debug-apk` artifact.
+GitHub Actions installs Android NDK `27.2.12479018` and CMake `3.22.1`, verifies the app has no Kotlin/Java sources or Kotlin/Compose Gradle dependencies, builds with:
 
-Open the **Actions** tab, choose the latest successful **Android CI** run, and download the artifact. It is a debug APK, not a signed production release.
+`gradle --no-daemon :app:assembleDebug`
 
-## Next engineering milestones
+The workflow uploads `app/build/outputs/apk/debug/app-debug.apk` as `jarvis-android-debug-apk`. This is a debug APK, not a signed production release.
 
-1. Stabilize the JNI/C++ build and test command classification on-device.
-2. Implement C++ audio input processing and integrate a real wake-word model.
-3. Add offline ASR and an on-device LLM runtime with model-size/device compatibility checks.
-4. Add an online provider adapter with user-supplied credentials and explicit consent for any paid usage.
-5. Implement safe Android Accessibility workflows for WhatsApp and YouTube with clear user confirmation before sending messages.
-6. Add automated tests, crash handling, privacy disclosures and release signing.
+## Next native C++ milestones
+
+1. Verify the NativeActivity APK build and resolve compiler or linker errors.
+2. Add native audio buffering, voice activity detection and ASR integration.
+3. Connect C++ transcript classification to native app actions.
+4. Integrate an offline wake-word engine and offline LLM/runtime.
+5. Add optional online AI through a user-configured provider.
+6. Implement permission-aware WhatsApp Accessibility automation and user-confirmed message sending.
+7. Test on the target Motorola device and prepare a signed release.
