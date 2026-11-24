@@ -74,6 +74,22 @@ jobs:
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug
 
+      - name: Verify unsigned release builds are rejected
+        shell: bash
+        run: |
+          LOG_FILE="$RUNNER_TEMP/jarvis-release-signing-check.log"
+          if gradle --no-daemon :app:assembleRelease >"$LOG_FILE" 2>&1; then
+            echo "An unsigned release build unexpectedly succeeded."
+            cat "$LOG_FILE"
+            exit 1
+          fi
+          if ! grep -q "Release signing is required" "$LOG_FILE"; then
+            echo "Release failed for an unexpected reason."
+            cat "$LOG_FILE"
+            exit 1
+          fi
+          echo "Unsigned release build was correctly rejected."
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
