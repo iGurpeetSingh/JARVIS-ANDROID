@@ -1,4 +1,5 @@
 #include <android_native_app_glue.h>
+#include <android/asset_manager.h>
 #include <android/log.h>
 #include <android/input.h>
 #include <android/native_window.h>
@@ -518,7 +519,7 @@ void launch_package(Engine& e, const char* packageName) {
         set_status(e, std::string("OPENED ") + packageName);
         env->DeleteLocalRef(intent);
     } else {
-        e.status = std::string("APP NOT INSTALLED: ") + packageName;
+        set_status(e, std::string("APP NOT INSTALLED: ") + packageName);
     }
 
     env->DeleteLocalRef(package);
@@ -588,6 +589,10 @@ int32_t handle_input(android_app* app, AInputEvent* event) {
     const float radius = std::min(e->width, e->height) * 0.19f;
 
     if (std::hypot(x-cx, y-cy) <= radius) {
+        if (e->processing.load()) {
+            set_status(*e, "OFFLINE ASR IS PROCESSING");
+            return 1;
+        }
         if (e->recording) {
             stop_audio(*e);
             set_status(*e, "MICROPHONE STOPPED - STARTING OFFLINE ASR");
