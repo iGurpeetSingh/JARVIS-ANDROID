@@ -58,9 +58,37 @@ set_target_properties(piper-phonemize-cxx-api PROPERTIES
     IMPORTED_LOCATION "${SHERPA_LIB_DIR}/libpiper_phonemize_cxx_api.so"
 )
 
+# Offline local language model runtime (llama.cpp C API).
+include(FetchContent)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_COMMON OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_UI OFF CACHE BOOL "" FORCE)
+set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
+set(LLAMA_SUBPROCESS OFF CACHE BOOL "" FORCE)
+set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
+set(GGML_CPU_KLEIDIAI ON CACHE BOOL "" FORCE)
+set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
+set(GGML_CUDA OFF CACHE BOOL "" FORCE)
+set(GGML_METAL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    llama_cpp
+    GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
+    GIT_TAG v1.0.0
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(llama_cpp)
+
 add_library(jarvis_native_app SHARED
     native-app.cpp
     native-lib.cpp
+    offline-llm.cpp
 )
 
 target_include_directories(jarvis_native_app PRIVATE
@@ -81,6 +109,7 @@ target_link_libraries(jarvis_native_app
     onnxruntime
     piper-phonemize-cxx-api
     piper-phonemize-core
+    llama
     ${android-lib}
     ${log-lib}
     ${egl-lib}
