@@ -8,6 +8,7 @@
 #include <GLES2/gl2.h>
 #include <jni.h>
 #include "command_engine.h"
+#include "offline-llm.h"
 #include "sherpa-onnx/c-api/cxx-api.h"
 #include "piper-phonemize/cxx-api.h"
 
@@ -64,8 +65,14 @@ struct Engine {
     std::thread kwsThread;
     std::thread asrThread;
     std::thread ttsThread;
+    std::thread llmThread;
+    std::thread modelDownloadThread;
     std::unique_ptr<sherpa_onnx::cxx::OfflineTts> hindiTts;
     std::atomic<bool> speaking{false};
+    std::atomic<bool> modelDownloading{false};
+    std::atomic<bool> localModelReady{false};
+    std::atomic<bool> pendingLlmQuery{false};
+    std::string pendingQuestion;
     std::mutex statusMutex;
     std::atomic<int> pendingCommand{0};
     std::string pendingContact;
@@ -291,7 +298,7 @@ void draw_ui(Engine& e) {
     draw_text(e, "WHATSAPP", margin+buttonW*0.23f, buttonY+buttonH*0.38f, labelScale, 0.55f,0.90f,1.0f);
     draw_text(e, "YOUTUBE", margin+buttonW+gap+buttonW*0.27f, buttonY+buttonH*0.38f, labelScale, 0.55f,0.90f,1.0f);
 
-    const std::string footer = "C++ NDK - NO KOTLIN UI";
+    const std::string footer = "TAP HERE TO INSTALL OFFLINE AI";
     draw_text(e, footer, (e.width-footer.size()*4.0f*2.0f)/2.0f, e.height*0.95f, 2.0f,0.30f,0.48f,0.60f);
     eglSwapBuffers(e.display, e.surface);
 }
@@ -706,6 +713,135 @@ void speak_hindi_async(Engine& e, const std::string& text) {
     });
 }
 
+
+std::string local_llm_model_path(Engine& e) {
+    return std::string(e.app->activity->internalDataPath) + "/Qwen3-0.6B.Q4_K_M.gguf";
+}
+
+bool download_model_file(Engine& e, const std::string& url, const std::string& path) {
+    JavaVM* vm = e.app->activity->vm;
+    JNIEnv* env = nullptr;
+    if (!vm || vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) {
+        set_status(e, "ANDROID NETWORK THREAD COULD NOT ATTACH");
+        return false;
+    }
+
+    bool success = false;
+    jclass urlClass = env->FindClass("java/net/URL");
+    jmethodID urlConstructor = env->GetMethodID(urlClass, "<init>", "(Ljava/lang/String;)V");
+    jstring urlText = env->NewStringUTF(url.c_str());
+    jobject urlObject = env->NewObject(urlClass, urlConstructor, urlText);
+    jmethodID openStream = env->GetMethodID(urlClass, "openStream", "()Ljava/io/InputStream;");
+    jobject input = env->CallObjectMethod(urlObject, openStream);
+
+    if (!env->ExceptionCheck() && input) {
+        jclass inputClass = env->GetObjectClass(input);
+        jmethodID readMethod = env->GetMethodID(inputClass, "read", "([BII)I");
+        jmethodID closeMethod = env->GetMethodID(inputClass, "close", "()V");
+        jbyteArray bytes = env->NewByteArray(32768);
+        std::vector<jbyte> nativeBuffer(32768);
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+
+        if (output) {
+            while (true) {
+                const jint count = env->CallIntMethod(input, readMethod, bytes, 0, 32768);
+                if (env->ExceptionCheck()) {
+                    clear_jni_exception(env);
+                    break;
+                }
+                if (count < 0) {
+                    success = true;
+                    break;
+                }
+                if (count == 0) continue;
+                env->GetByteArrayRegion(bytes, 0, count, nativeBuffer.data());
+                if (env->ExceptionCheck()) {
+                    clear_jni_exception(env);
+                    break;
+                }
+                output.write(reinterpret_cast<const char*>(nativeBuffer.data()), count);
+                if (!output) break;
+            }
+            output.flush();
+            success = success && output.good();
+        }
+
+        env->CallVoidMethod(input, closeMethod);
+        clear_jni_exception(env);
+        if (bytes) env->DeleteLocalRef(bytes);
+        env->DeleteLocalRef(inputClass);
+    } else {
+        clear_jni_exception(env);
+    }
+
+    if (input) env->DeleteLocalRef(input);
+    if (urlObject) env->DeleteLocalRef(urlObject);
+    if (urlText) env->DeleteLocalRef(urlText);
+    if (urlClass) env->DeleteLocalRef(urlClass);
+    vm->DetachCurrentThread();
+
+    if (!success) std::remove(path.c_str());
+    return success;
+}
+
+void start_offline_model_setup(Engine& e) {
+    const std::string modelPath = local_llm_model_path(e);
+    if (jarvis::offline_llm_model_exists(modelPath)) {
+        e.localModelReady.store(true);
+        set_status(e, "OFFLINE AI MODEL ALREADY INSTALLED");
+        speak_hindi_async(e, "ऑफलाइन ए आई मॉडल पहले से तैयार है।");
+        return;
+    }
+
+    if (e.modelDownloading.exchange(true)) {
+        set_status(e, "OFFLINE AI DOWNLOAD ALREADY RUNNING");
+        return;
+    }
+    if (e.modelDownloadThread.joinable()) e.modelDownloadThread.join();
+
+    e.modelDownloadThread = std::thread([&e, modelPath] {
+        set_status(e, "DOWNLOADING OFFLINE AI - 484 MB");
+        const std::string url =
+            "https://huggingface.co/QuantFactory/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B.Q4_K_M.gguf";
+        const bool downloaded = download_model_file(e, url, modelPath);
+        const bool valid = downloaded && jarvis::offline_llm_model_exists(modelPath);
+        e.localModelReady.store(valid);
+        e.modelDownloading.store(false);
+
+        if (valid) {
+            set_status(e, "OFFLINE QWEN AI MODEL INSTALLED");
+            speak_hindi_async(e, "ऑफलाइन ए आई मॉडल डाउनलोड हो गया है। अब आप मुझसे सवाल पूछ सकते हैं।");
+        } else {
+            set_status(e, "OFFLINE AI DOWNLOAD FAILED - CHECK INTERNET");
+            speak_hindi_async(e, "ऑफलाइन ए आई मॉडल डाउनलोड नहीं हो पाया। इंटरनेट कनेक्शन जाँचें।");
+        }
+    });
+}
+
+void start_offline_llm_reply(Engine& e, const std::string& question) {
+    if (!jarvis::offline_llm_model_exists(local_llm_model_path(e))) {
+        set_status(e, "TAP AI SETUP TO DOWNLOAD OFFLINE MODEL");
+        speak_hindi_async(e, "ऑफलाइन ए आई मॉडल अभी डाउनलोड नहीं हुआ है। पहले नीचे ए आई सेटअप दबाएँ।");
+        return;
+    }
+
+    if (e.llmThread.joinable()) e.llmThread.join();
+    e.llmThread = std::thread([&e, question] {
+        set_status(e, "THINKING WITH LOCAL QWEN AI");
+        std::string error;
+        const std::string answer = jarvis::offline_llm_generate(
+            local_llm_model_path(e), question, &error);
+        if (answer.empty()) {
+            set_status(e, error.empty() ? "LOCAL AI RETURNED NO ANSWER" : error);
+            speak_hindi_async(e, "माफ़ कीजिए, अभी मैं इस सवाल का जवाब नहीं दे पाया।");
+        } else {
+            set_status(e, "OFFLINE AI RESPONSE READY");
+            LOGI("Offline AI answer generated (%zu chars)", answer.size());
+            speak_hindi_async(e, answer);
+        }
+    });
+}
+
 void start_transcription(Engine& e) {
     if (e.processing.load()) {
         set_status(e, "ASR IS STILL PROCESSING");
@@ -786,7 +922,13 @@ void start_transcription(Engine& e) {
             : jarvis::Command::OpenWhatsAppContact;
         if (!contactQuery.empty()) e.pendingContact = contactQuery;
         if (command == jarvis::Command::Unknown) {
-            set_status(e, result.text.empty() ? "NO SPEECH RECOGNIZED" : "SPEECH HEARD - NO COMMAND MATCH");
+            if (!result.text.empty()) {
+                e.pendingQuestion = result.text;
+                e.pendingLlmQuery.store(true, std::memory_order_release);
+                set_status(e, "QUESTION HEARD - ROUTING TO LOCAL AI");
+            } else {
+                set_status(e, "NO SPEECH RECOGNIZED");
+            }
         } else {
             e.pendingCommand.store(static_cast<int>(command));
             set_status(e, "VOICE COMMAND RECOGNIZED");
@@ -1185,7 +1327,7 @@ int32_t handle_input(android_app* app, AInputEvent* event) {
     }
 
     if (y > e->height*0.90f) {
-        execute_command(*e, jarvis::classify_command("volume up"));
+        start_offline_model_setup(*e);
         return 1;
     }
     return 1;
@@ -1234,6 +1376,9 @@ void android_main(android_app* app) {
                 stop_audio(engine);
                 if (engine.asrThread.joinable()) engine.asrThread.join();
                 if (engine.ttsThread.joinable()) engine.ttsThread.join();
+                if (engine.llmThread.joinable()) engine.llmThread.join();
+                if (engine.modelDownloadThread.joinable()) engine.modelDownloadThread.join();
+                jarvis::offline_llm_shutdown();
                 shutdown_gl(engine);
                 return;
             }
@@ -1246,6 +1391,12 @@ void android_main(android_app* app) {
             stop_audio(engine);
             set_status(engine, "COMMAND CAPTURED - TRANSCRIBING OFFLINE");
             start_transcription(engine);
+        }
+
+        if (engine.pendingLlmQuery.exchange(false)) {
+            const std::string question = engine.pendingQuestion;
+            engine.pendingQuestion.clear();
+            start_offline_llm_reply(engine, question);
         }
 
         const int completedCommand = engine.pendingCommand.exchange(0);
