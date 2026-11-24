@@ -599,13 +599,15 @@ void speak_hindi_async(Engine& e, const std::string& text) {
         const std::string espeakDir = baseDir + "/espeak-ng-data";
         mkdir(modelDir.c_str(), 0700);
 
-        const std::string modelPath = modelDir + "/model.int8.onnx";
+        const std::string modelPath = modelDir + "/model.onnx";
         const std::string tokensPath = modelDir + "/tokens.txt";
         const bool ready =
             copy_asset_to_file(e.app->activity->assetManager,
-                               "jarvis-tts/model.int8.onnx", modelPath) &&
+                               "jarvis-tts/model.onnx", modelPath) &&
             copy_asset_to_file(e.app->activity->assetManager,
                                "jarvis-tts/tokens.txt", tokensPath) &&
+            copy_asset_to_file(e.app->activity->assetManager,
+                               "jarvis-tts/model.onnx.json", modelPath + ".json") &&
             copy_asset_tree(e.app->activity->assetManager,
                             "espeak-ng-data", espeakDir);
 
