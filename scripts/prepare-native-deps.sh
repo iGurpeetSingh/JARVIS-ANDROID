@@ -91,7 +91,7 @@ phrases = ["JARVIS", "HEY JARVIS"]
 encoded = text2token(phrases, tokens_path, tokens_type="bpe", bpe_model=bpe_path)
 with open(output_path, "w", encoding="utf-8") as output:
     for phrase, pieces in zip(phrases, encoded):
-        output.write(" ".join(pieces) + " :2.0 #0.25 @" + phrase + "\\n")
+        output.write(" ".join(pieces) + " :2.0 #0.25 @" + phrase + "\n")
 print("Generated wake phrases:", phrases)
 PY
 
