@@ -25,7 +25,7 @@ import android.view.View;
 import android.view.WindowManager;
 
 public final class JarvisVoiceService extends Service {
-    private static final String CHANNEL_ID = "jarvis_voice_listener";
+    private static final String CHANNEL_ID = "guri_voice_listener";
     private static final int NOTIFICATION_ID = 7401;
     private static final String ACTION_STOP = "com.jarvis.assistant.action.STOP_VOICE_SERVICE";
     private static volatile JarvisVoiceService instance;
@@ -36,7 +36,7 @@ public final class JarvisVoiceService extends Service {
         try {
             System.loadLibrary("jarvis_native_app");
         } catch (UnsatisfiedLinkError error) {
-            android.util.Log.e("JARVIS_SERVICE", "Native engine library is unavailable", error);
+            android.util.Log.e("GURI_SERVICE", "Native engine library is unavailable", error);
         }
     }
 
@@ -45,7 +45,7 @@ public final class JarvisVoiceService extends Service {
     public static void setEdgeVisible(final boolean visible) {
         final JarvisVoiceService service = instance;
         if (service == null) {
-            android.util.Log.w("JARVIS_SERVICE",
+            android.util.Log.w("GURI_SERVICE",
                     "RGB edge request received before voice service initialization");
             return;
         }
@@ -66,7 +66,7 @@ public final class JarvisVoiceService extends Service {
         try {
             startVoiceForeground();
         } catch (RuntimeException error) {
-            android.util.Log.e("JARVIS_SERVICE",
+            android.util.Log.e("GURI_SERVICE",
                     "Microphone foreground service could not start; check RECORD_AUDIO and Android FGS rules",
                     error);
             stopSelf();
@@ -77,9 +77,9 @@ public final class JarvisVoiceService extends Service {
         edgeOverlay = new EdgeOverlay();
         try {
             nativeServiceStateChanged(true);
-            android.util.Log.i("JARVIS_SERVICE", "Background voice foreground service is active");
+            android.util.Log.i("GURI_SERVICE", "GURI foreground voice service is active");
         } catch (UnsatisfiedLinkError error) {
-            android.util.Log.e("JARVIS_SERVICE", "Cannot notify native voice engine", error);
+            android.util.Log.e("GURI_SERVICE", "Cannot notify native voice engine", error);
         }
     }
 
@@ -89,7 +89,9 @@ public final class JarvisVoiceService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
-        return START_NOT_STICKY;
+        // Android may recreate the service after reclaiming its process. The
+        // NativeActivity remains the owner of the native audio engine.
+        return START_STICKY;
     }
 
     @Override public IBinder onBind(Intent intent) { return null; }
@@ -107,7 +109,7 @@ public final class JarvisVoiceService extends Service {
         try {
             nativeServiceStateChanged(false);
         } catch (UnsatisfiedLinkError error) {
-            android.util.Log.w("JARVIS_SERVICE", "Native engine already unloaded");
+            android.util.Log.w("GURI_SERVICE", "Native engine already unloaded");
         }
         super.onDestroy();
     }
@@ -115,8 +117,8 @@ public final class JarvisVoiceService extends Service {
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         NotificationChannel channel = new NotificationChannel(
-                CHANNEL_ID, "JARVIS voice listener", NotificationManager.IMPORTANCE_LOW);
-        channel.setDescription("Keeps the offline JARVIS wake-word listener active while other apps are open.");
+                CHANNEL_ID, "GURI voice listener", NotificationManager.IMPORTANCE_LOW);
+        channel.setDescription("Keeps the offline GURI wake-word listener active while other apps are open.");
         NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager != null) manager.createNotificationChannel(channel);
     }
@@ -132,7 +134,7 @@ public final class JarvisVoiceService extends Service {
                 : new Notification.Builder(this);
         Notification notification = builder
                 .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-                .setContentTitle("JARVIS background voice is active")
+                .setContentTitle("GURI background voice is active")
                 .setContentText("Offline wake-word listening. RGB edge light appears during a command.")
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .setOngoing(true)
@@ -155,12 +157,12 @@ public final class JarvisVoiceService extends Service {
         void show() {
             if (view != null) return;
             if (windowManager == null) {
-                android.util.Log.e("JARVIS_SERVICE", "WindowManager is unavailable; RGB edge light cannot be displayed");
+                android.util.Log.e("GURI_SERVICE", "WindowManager is unavailable; RGB edge light cannot be displayed");
                 return;
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
                     !Settings.canDrawOverlays(JarvisVoiceService.this)) {
-                android.util.Log.w("JARVIS_SERVICE", "Overlay permission is disabled; RGB edge light was not displayed");
+                android.util.Log.w("GURI_SERVICE", "Overlay permission is disabled; RGB edge light was not displayed");
                 return;
             }
             EdgeLightView next = new EdgeLightView(JarvisVoiceService.this);
@@ -176,7 +178,7 @@ public final class JarvisVoiceService extends Service {
                             : WindowManager.LayoutParams.TYPE_PHONE,
                     flags, PixelFormat.TRANSLUCENT);
             params.gravity = Gravity.TOP | Gravity.START;
-            params.setTitle("JARVIS RGB Edge Light");
+            params.setTitle("GURI RGB Edge Light");
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 params.layoutInDisplayCutoutMode =
                         WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
@@ -184,9 +186,9 @@ public final class JarvisVoiceService extends Service {
             try {
                 windowManager.addView(next, params);
                 view = next;
-                android.util.Log.i("JARVIS_SERVICE", "RGB edge light overlay attached");
+                android.util.Log.i("GURI_SERVICE", "RGB edge light overlay attached");
             } catch (WindowManager.BadTokenException | SecurityException error) {
-                android.util.Log.e("JARVIS_SERVICE", "Could not show RGB edge overlay", error);
+                android.util.Log.e("GURI_SERVICE", "Could not show RGB edge overlay", error);
             }
         }
 
@@ -198,7 +200,7 @@ public final class JarvisVoiceService extends Service {
                 // The system may already have removed the overlay window.
             }
             view = null;
-            android.util.Log.i("JARVIS_SERVICE", "RGB edge light overlay detached");
+            android.util.Log.i("GURI_SERVICE", "RGB edge light overlay detached");
         }
     }
 
