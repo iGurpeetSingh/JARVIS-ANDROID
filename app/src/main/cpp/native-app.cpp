@@ -10,7 +10,7 @@
 #include "command_engine.h"
 #include "offline-llm.h"
 #include "sherpa-onnx/c-api/cxx-api.h"
-#include "piper-phonemize/cxx-api.h"
+#include "cxx-api.h"
 
 #include <algorithm>
 #include <array>
