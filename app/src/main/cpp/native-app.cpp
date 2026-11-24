@@ -79,6 +79,8 @@ struct Engine {
     std::string pendingYoutubeQuery;
     std::atomic<bool> processing{false};
     std::atomic<bool> wakeListening{false};
+    std::atomic<bool> autoWakePending{false};
+    std::atomic<bool> micPermissionPending{false};
     std::atomic<bool> wakeDetected{false};
     std::atomic<bool> commandReady{false};
     std::atomic<bool> speechStarted{false};
@@ -971,10 +973,12 @@ void start_transcription(Engine& e) {
 void start_audio(Engine& e) {
     if (e.audioStream || e.recording.load()) return;
     if (!has_audio_permission(e)) {
+        e.micPermissionPending.store(true);
         request_audio_permission(e);
-        set_status(e, "ALLOW MIC PERMISSION THEN TAP AGAIN");
+        set_status(e, "ALLOW MIC PERMISSION TO START JARVIS");
         return;
     }
+    e.micPermissionPending.store(false);
 
     if (e.asrThread.joinable()) e.asrThread.join();
 
@@ -1435,10 +1439,17 @@ void handle_cmd(android_app* app, int32_t cmd) {
             shutdown_gl(*e);
             break;
         case APP_CMD_GAINED_FOCUS:
+            e->autoWakePending.store(true);
+            if (e->display != EGL_NO_DISPLAY) draw_ui(*e);
+            break;
         case APP_CMD_WINDOW_RESIZED:
             if (e->display != EGL_NO_DISPLAY) draw_ui(*e);
             break;
         case APP_CMD_LOST_FOCUS:
+            if (e->recording.load()) {
+                stop_audio(*e);
+                set_status(*e, "WAKE LISTENER PAUSED - APP NOT IN FOREGROUND");
+            }
             break;
         default:
             break;
@@ -1476,6 +1487,17 @@ void android_main(android_app* app) {
         } while (ident >= 0);
         if (engine.kwsFailed.exchange(false)) {
             stop_audio(engine);
+        }
+
+        if (engine.autoWakePending.exchange(false) && !engine.recording.load() &&
+            !engine.processing.load() && !engine.speaking.load() && !engine.modelDownloading.load()) {
+            start_audio(engine);
+        }
+
+        if (engine.micPermissionPending.load() && has_audio_permission(engine) &&
+            !engine.recording.load() && !engine.processing.load()) {
+            engine.micPermissionPending.store(false);
+            start_audio(engine);
         }
 
         if (engine.commandReady.exchange(false) && engine.recording.load()) {
