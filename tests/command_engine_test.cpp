@@ -39,8 +39,14 @@ int main() {
     assert(hindiContact == "Nofil");
     assert(hindiMessage == "main aa raha hoon");
 
-    assert(jarvis::classify_command("haan") == Command::ConfirmPendingAction);
-    assert(jarvis::classify_command("नहीं") == Command::CancelPendingAction);
+    assert(jarvis::classify_confirmation("haan") == Command::ConfirmPendingAction);
+    assert(jarvis::classify_confirmation("हाँ।") == Command::ConfirmPendingAction);
+    assert(jarvis::classify_confirmation("नहीं") == Command::CancelPendingAction);
+    assert(jarvis::classify_confirmation("cancel!") == Command::CancelPendingAction);
+    assert(jarvis::classify_confirmation("yesterday") == Command::Unknown);
+    assert(jarvis::classify_confirmation("no one knows") == Command::Unknown);
+    assert(jarvis::classify_command("haan") == Command::Unknown);
+    assert(jarvis::classify_command("नहीं") == Command::Unknown);
 
     const std::string chat = jarvis::extract_contact_query("open chat with Sumit Kumar");
     assert(chat == "Sumit Kumar");
@@ -49,6 +55,9 @@ int main() {
     assert(message == "Nofil");
 
     assert(jarvis::classify_command("what is the weather") == Command::Unknown);
+    assert(jarvis::extract_contact_query("open WhatsApp and search for Pradeep") == "Pradeep");
+    assert(jarvis::extract_contact_message("message to Sam text: Call me at 5") == "Call me at 5");
+    assert(jarvis::extract_youtube_query("search youtube for  Punjabi songs please") == "Punjabi songs");
 
     std::cout << "JARVIS native command engine tests passed.\n";
     return 0;
