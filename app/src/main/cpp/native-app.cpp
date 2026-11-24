@@ -25,6 +25,8 @@
 #include <deque>
 #include <thread>
 #include <fstream>
+#include <functional>
+#include <utility>
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -575,7 +577,7 @@ void play_generated_audio(const sherpa_onnx::cxx::GeneratedAudio& generated) {
             std::min<size_t>(2048, pcm.size() - offset));
         const aaudio_result_t written = AAudioStream_write(
             output, pcm.data() + offset, frames, 1000000000LL);
-        if (written < 0) {
+        if (written <= 0) {
             LOGE("Hindi speech output failed: %s", AAudio_convertResultToText(written));
             break;
         }
@@ -599,7 +601,6 @@ void speak_hindi_async(Engine& e, const std::string& text) {
 
         const std::string modelPath = modelDir + "/model.int8.onnx";
         const std::string tokensPath = modelDir + "/tokens.txt";
-        const std::string espeakPhontab = espeakDir + "/phontab";
         const bool ready =
             copy_asset_to_file(e.app->activity->assetManager,
                                "jarvis-tts/model.int8.onnx", modelPath) &&
@@ -938,6 +939,10 @@ int32_t handle_input(android_app* app, AInputEvent* event) {
     const float radius = std::min(e->width, e->height) * 0.19f;
 
     if (std::hypot(x-cx, y-cy) <= radius) {
+        if (e->speaking.load()) {
+            set_status(*e, "JARVIS IS SPEAKING");
+            return 1;
+        }
         if (e->processing.load()) {
             set_status(*e, "OFFLINE ASR IS PROCESSING");
             return 1;
