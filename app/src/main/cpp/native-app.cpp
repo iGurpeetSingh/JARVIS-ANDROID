@@ -1296,7 +1296,14 @@ void start_transcription(Engine& e) {
 
 void start_audio(Engine& e) {
     try {
-    if (e.audioStream || e.recording.load()) return;
+    LOGI("start_audio requested focus=%d permission=%d service=%d",
+         e.hasWindowFocus.load() ? 1 : 0,
+         has_audio_permission(e) ? 1 : 0,
+         gVoiceServiceRunning.load(std::memory_order_acquire) ? 1 : 0);
+    if (e.audioStream || e.recording.load()) {
+        LOGI("start_audio ignored because capture is already active");
+        return;
+    }
     hide_edge_overlay(e);
     if (!e.hasWindowFocus.load() && !gVoiceServiceRunning.load(std::memory_order_acquire)) {
         set_status(e, "MICROPHONE PAUSED - GURI IS NOT IN FOREGROUND");
@@ -1346,6 +1353,7 @@ void start_audio(Engine& e) {
     const aaudio_result_t openResult = AAudioStreamBuilder_openStream(builder, &e.audioStream);
     AAudioStreamBuilder_delete(builder);
     if (openResult != AAUDIO_OK || !e.audioStream) {
+        LOGE("AAudio openStream failed: %s (%d)", AAudio_convertResultToText(openResult), openResult);
         set_status(e, "FAILED TO OPEN MICROPHONE");
         e.audioStream = nullptr;
         e.wakeListening.store(false);
@@ -1362,6 +1370,7 @@ void start_audio(Engine& e) {
 
     e.recording.store(true);
     e.kwsThread = std::thread(run_wake_word_engine, std::ref(e));
+    LOGI("AAudio input capture started successfully");
     set_status(e, "LISTENING FOR GURI");
     LOGI("Native AAudio wake-word listener started");
     } catch (const std::exception& error) {
@@ -1806,15 +1815,27 @@ void execute_command(Engine& e, jarvis::Command command, const std::string& cont
 int32_t handle_input(android_app* app, AInputEvent* event) {
     auto* e = static_cast<Engine*>(app->userData);
     if (!e || AInputEvent_getType(event) != AINPUT_EVENT_TYPE_MOTION) return 0;
-    if (AMotionEvent_getAction(event) != AMOTION_EVENT_ACTION_UP) return 1;
+
+    // Android encodes pointer-index bits into the action value. Mask the
+    // action before comparing so touch handling remains correct for every
+    // pointer configuration, not only a single-pointer ACTION_UP.
+    const int32_t action = AMotionEvent_getAction(event) & AMOTION_EVENT_ACTION_MASK;
+    if (action != AMOTION_EVENT_ACTION_UP) return 1;
 
     const float x = AMotionEvent_getX(event, 0);
     const float y = AMotionEvent_getY(event, 0);
+    LOGI("Touch release x=%.1f y=%.1f surface=%dx%d focus=%d",
+         x, y, e->width, e->height, e->hasWindowFocus.load() ? 1 : 0);
+
     const float cx = e->width * 0.5f;
     const float cy = e->height * 0.43f;
     const float radius = std::min(e->width, e->height) * 0.19f;
 
     if (std::hypot(x-cx, y-cy) <= radius) {
+        LOGI("Microphone control hit recording=%d processing=%d speaking=%d audioPermission=%d service=%d",
+             e->recording.load() ? 1 : 0, e->processing.load() ? 1 : 0,
+             e->speaking.load() ? 1 : 0, has_audio_permission(*e) ? 1 : 0,
+             gVoiceServiceRunning.load(std::memory_order_acquire) ? 1 : 0);
         if (e->speaking.load()) {
             set_status(*e, "GURI IS SPEAKING");
             return 1;
@@ -1825,6 +1846,7 @@ int32_t handle_input(android_app* app, AInputEvent* event) {
         }
         if (e->recording.load()) {
             const bool commandWasTriggered = e->wakeDetected.load();
+            LOGI("Microphone control stopping active capture");
             stop_audio(*e);
             if (commandWasTriggered) {
                 set_status(*e, "MIC LISTENING STOPPED - TRANSCRIBING");
@@ -1833,6 +1855,7 @@ int32_t handle_input(android_app* app, AInputEvent* event) {
                 set_status(*e, "WAKE WORD LISTENING STOPPED");
             }
         } else {
+            LOGI("Microphone control starting capture");
             start_audio(*e);
         }
         return 1;
@@ -1854,6 +1877,9 @@ int32_t handle_input(android_app* app, AInputEvent* event) {
 
 void handle_cmd(android_app* app, int32_t cmd) {
     auto* e = static_cast<Engine*>(app->userData);
+    LOGI("NativeActivity app command=%d focus=%d service=%d",
+         cmd, e->hasWindowFocus.load() ? 1 : 0,
+         gVoiceServiceRunning.load(std::memory_order_acquire) ? 1 : 0);
     switch (cmd) {
         case APP_CMD_INIT_WINDOW:
             if (app->window && init_gl(*e)) draw_ui(*e);
