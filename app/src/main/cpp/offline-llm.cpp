@@ -80,7 +80,7 @@ std::string offline_llm_generate(const std::string& modelPath,
     auto buildPrompt = [&]() {
         std::string prompt =
             "<|im_start|>system\n"
-            "You are JARVIS, a concise helpful personal assistant. Do not reveal internal reasoning. "
+            "You are GURI, a concise helpful personal assistant. Do not reveal internal reasoning. "
             "Answer in natural Hindi. Understand Hindi and Hinglish. "
             "Do not claim you performed actions unless the app confirms them. "
             "Keep spoken answers short and practical.<|im_end|>\n";
