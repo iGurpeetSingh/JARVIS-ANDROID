@@ -34,7 +34,6 @@ std::string extract_contact_query(const std::string& raw) {
         "संपर्क खोजो ", "कॉन्टैक्ट खोजो ", "कॉन्टैक्ट ढूंढो ",
         "व्हाट्सएप पर खोजो ", "व्हाट्सऐप पर खोजो "
     };
-
     size_t start = std::string::npos;
     size_t markerLength = 0;
     for (const char* marker : markers) {
@@ -52,20 +51,22 @@ std::string extract_contact_query(const std::string& raw) {
         const size_t englishEnd = text.find(" ko whatsapp");
         const size_t hindiEnd = text.find(" को व्हाट्स");
         size_t end = std::min(englishEnd, hindiEnd);
-        if (end == std::string::npos) end = (englishEnd == std::string::npos ? hindiEnd : englishEnd);
+        if (end == std::string::npos) end = englishEnd == std::string::npos ? hindiEnd : englishEnd;
         if (end != std::string::npos && end > 0) {
             candidate = raw.substr(0, end);
             const size_t whatsapp = lower_ascii(candidate).rfind("whatsapp");
             if (whatsapp != std::string::npos) candidate.erase(whatsapp);
         }
     }
-
     if (candidate.empty()) return {};
-    std::string lowerCandidate = lower_ascii(candidate);
+
+    const std::string lowerCandidate = lower_ascii(candidate);
     const std::initializer_list<const char*> endings = {
+        " saying ", " with message ", " message: ", " text: ",
         " on whatsapp", " whatsapp", " please", " ko kholo",
-        " ko kholo", " को खोलो", " को खोल", " को व्हाट्स",
-        " पर खोलो", " पर खोल", " open whatsapp"
+        " को खोलो", " को खोल", " को व्हाट्स", " पर खोलो",
+        " पर खोल", " open whatsapp", " कहना ", " बोलो ",
+        " संदेश ", " मैसेज ", " लिखो "
     };
     size_t trimAt = candidate.size();
     for (const char* ending : endings) {
@@ -73,7 +74,6 @@ std::string extract_contact_query(const std::string& raw) {
         if (pos != std::string::npos) trimAt = std::min(trimAt, pos);
     }
     candidate.resize(trimAt);
-
     const auto isSpace = [](unsigned char ch) { return std::isspace(ch) || ch == ',' || ch == '.'; };
     while (!candidate.empty() && isSpace(static_cast<unsigned char>(candidate.front()))) candidate.erase(candidate.begin());
     while (!candidate.empty() && isSpace(static_cast<unsigned char>(candidate.back()))) candidate.pop_back();
@@ -81,6 +81,28 @@ std::string extract_contact_query(const std::string& raw) {
     return candidate;
 }
 
+std::string extract_contact_message(const std::string& raw) {
+    const std::string text = lower_ascii(raw);
+    const std::initializer_list<const char*> markers = {
+        " saying ", " with message ", " message: ", " text: ",
+        " कहना ", " बोलो ", " बोलना ", " संदेश ", " मैसेज ", " लिखो "
+    };
+    size_t start = std::string::npos;
+    size_t markerLength = 0;
+    for (const char* marker : markers) {
+        const size_t pos = text.find(marker);
+        if (pos != std::string::npos && (start == std::string::npos || pos < start)) {
+            start = pos;
+            markerLength = std::char_traits<char>::length(marker);
+        }
+    }
+    if (start == std::string::npos) return {};
+    std::string message = raw.substr(start + markerLength);
+    while (!message.empty() && std::isspace(static_cast<unsigned char>(message.front()))) message.erase(message.begin());
+    while (!message.empty() && std::isspace(static_cast<unsigned char>(message.back()))) message.pop_back();
+    if (message.size() > 1000) message.resize(1000);
+    return message;
+}
 
 std::string extract_youtube_query(const std::string& raw) {
     const std::string text = lower_ascii(raw);
@@ -116,6 +138,8 @@ Command classify_command(const std::string& raw) {
     const std::string text = lower_ascii(raw);
     if (!extract_contact_query(raw).empty()) return Command::OpenWhatsAppContact;
     if (!extract_youtube_query(raw).empty()) return Command::SearchYouTube;
+    if (contains_any(text, {"yes", "confirm", "send it", "haan bhejo", "han bhejo", "हाँ भेजो", "हां भेजो", "ठीक है भेजो"})) return Command::ConfirmPendingAction;
+    if (contains_any(text, {"no", "cancel", "mat bhejo", "मत भेजो", "नहीं भेजना", "रद्द करो"})) return Command::CancelPendingAction;
 
     if (contains_any(text, {"volume up", "increase volume", "turn up volume", "volume badhao",
                             "awaz badhao", "आवाज बढ़", "वॉल्यूम बढ़", "आवाज़ बढ़",
