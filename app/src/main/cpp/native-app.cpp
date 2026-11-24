@@ -435,10 +435,30 @@ void request_overlay_permission(Engine& e) {
     env->DeleteLocalRef(intent); env->DeleteLocalRef(action); env->DeleteLocalRef(intentClass);
 }
 
+jclass load_application_class(Engine& e, const char* dottedName) {
+    JNIEnv* env = e.app->activity->env;
+    jobject activity = e.app->activity->clazz;
+    jclass activityClass = env->GetObjectClass(activity);
+    jmethodID getClassLoader = env->GetMethodID(
+        activityClass, "getClassLoader", "()Ljava/lang/ClassLoader;");
+    jobject classLoader = env->CallObjectMethod(activity, getClassLoader);
+    jclass loaderClass = env->FindClass("java/lang/ClassLoader");
+    jmethodID loadClass = env->GetMethodID(
+        loaderClass, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;");
+    jstring name = env->NewStringUTF(dottedName);
+    jobject loaded = env->CallObjectMethod(classLoader, loadClass, name);
+    clear_jni_exception(env);
+    env->DeleteLocalRef(name);
+    env->DeleteLocalRef(loaderClass);
+    env->DeleteLocalRef(classLoader);
+    env->DeleteLocalRef(activityClass);
+    return static_cast<jclass>(loaded);
+}
+
 bool start_voice_service(Engine& e) {
     JNIEnv* env = e.app->activity->env;
     jobject activity = e.app->activity->clazz;
-    jclass serviceClass = env->FindClass("com/jarvis/assistant/JarvisVoiceService");
+    jclass serviceClass = load_application_class(e, "com.jarvis.assistant.JarvisVoiceService");
     if (!serviceClass) { clear_jni_exception(env); return false; }
     jclass intentClass = env->FindClass("android/content/Intent");
     jmethodID constructor = env->GetMethodID(intentClass, "<init>", "(Landroid/content/Context;Ljava/lang/Class;)V");
@@ -466,7 +486,7 @@ bool start_voice_service(Engine& e) {
 
 void set_edge_overlay(Engine& e, bool visible) {
     JNIEnv* env = e.app->activity->env;
-    jclass serviceClass = env->FindClass("com/jarvis/assistant/JarvisVoiceService");
+    jclass serviceClass = load_application_class(e, "com.jarvis.assistant.JarvisVoiceService");
     if (!serviceClass) { clear_jni_exception(env); return; }
     jmethodID method = env->GetStaticMethodID(serviceClass, "setEdgeVisible", "(Z)V");
     if (method) env->CallStaticVoidMethod(serviceClass, method, visible ? JNI_TRUE : JNI_FALSE);
