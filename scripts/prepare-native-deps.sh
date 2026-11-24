@@ -18,14 +18,14 @@ echo "$SHERPA_SHA256  $TMP_DIR/sherpa-android.tar.bz2" | sha256sum --check
 mkdir -p "$TMP_DIR/sherpa"
 tar -xjf "$TMP_DIR/sherpa-android.tar.bz2" -C "$TMP_DIR/sherpa"
 
-HEADER="$(find "$TMP_DIR/sherpa" -type f -path '*/include/sherpa-onnx/c-api/cxx-api.h' -print -quit)"
-if [[ -z "$HEADER" ]]; then
-  echo "Could not find sherpa-onnx C++ API headers in the official Android package."
-  find "$TMP_DIR/sherpa" -maxdepth 5 -type f | head -100
-  exit 1
-fi
-INCLUDE_ROOT="${HEADER%/sherpa-onnx/c-api/cxx-api.h}"
-cp -R "$INCLUDE_ROOT/sherpa-onnx" "$ROOT/app/src/main/cpp/vendor/sherpa/include/"
+HEADER_DIR="$ROOT/app/src/main/cpp/vendor/sherpa/include/sherpa-onnx/c-api"
+mkdir -p "$HEADER_DIR"
+curl --fail --location --retry 3 \
+  "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v2.0.3/sherpa-onnx/c-api/cxx-api.h" \
+  -o "$HEADER_DIR/cxx-api.h"
+curl --fail --location --retry 3 \
+  "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v2.0.3/sherpa-onnx/c-api/c-api.h" \
+  -o "$HEADER_DIR/c-api.h"
 
 LIB_FILE="$(find "$TMP_DIR/sherpa" -type f -name 'libsherpa-onnx-cxx-api.so' -path '*arm64-v8a*' -print -quit)"
 ONNX_FILE="$(find "$TMP_DIR/sherpa" -type f -name 'libonnxruntime.so' -path '*arm64-v8a*' -print -quit)"
