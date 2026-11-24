@@ -65,6 +65,7 @@ struct Engine {
     bool voiceServiceStartRequested = false;
     bool overlaySettingsRequested = false;
     bool lastVoiceServiceRunning = false;
+    bool jniAttachedByNativeThread = false;
     std::string status = "NATIVE C++ CORE READY";
     AAudioStream* audioStream = nullptr;
     std::atomic<int> inputPeak{0};
@@ -110,6 +111,15 @@ struct Engine {
     std::atomic<int> commandFrames{0};
     int32_t capturedSampleRate = 16000;
 };
+
+JNIEnv* current_jni_env(Engine& e) {
+    JNIEnv* env = nullptr;
+    JavaVM* vm = e.app->activity->vm;
+    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_OK) return env;
+    if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK) return nullptr;
+    e.jniAttachedByNativeThread = true;
+    return env;
+}
 
 void set_status(Engine& e, const std::string& value) {
     std::lock_guard<std::mutex> lock(e.statusMutex);
@@ -335,7 +345,7 @@ void clear_jni_exception(JNIEnv* env) {
 }
 
 bool has_audio_permission(Engine& e) {
-    JNIEnv* env = e.app->activity->env;
+    JNIEnv* env = current_jni_env(e);
     jobject activity = e.app->activity->clazz;
     jclass cls = env->GetObjectClass(activity);
     jmethodID check = env->GetMethodID(cls, "checkSelfPermission", "(Ljava/lang/String;)I");
@@ -348,7 +358,7 @@ bool has_audio_permission(Engine& e) {
 }
 
 void request_audio_permission(Engine& e) {
-    JNIEnv* env = e.app->activity->env;
+    JNIEnv* env = current_jni_env(e);
     jobject activity = e.app->activity->clazz;
     jclass cls = env->GetObjectClass(activity);
     jclass stringClass = env->FindClass("java/lang/String");
@@ -366,7 +376,7 @@ void request_audio_permission(Engine& e) {
 
 
 bool has_contacts_permission(Engine& e) {
-    JNIEnv* env = e.app->activity->env;
+    JNIEnv* env = current_jni_env(e);
     jobject activity = e.app->activity->clazz;
     jclass cls = env->GetObjectClass(activity);
     jmethodID check = env->GetMethodID(cls, "checkSelfPermission", "(Ljava/lang/String;)I");
@@ -379,7 +389,7 @@ bool has_contacts_permission(Engine& e) {
 }
 
 void request_contacts_permission(Engine& e) {
-    JNIEnv* env = e.app->activity->env;
+    JNIEnv* env = current_jni_env(e);
     jobject activity = e.app->activity->clazz;
     jclass cls = env->GetObjectClass(activity);
     jclass stringClass = env->FindClass("java/lang/String");
@@ -397,7 +407,7 @@ void request_contacts_permission(Engine& e) {
 
 bool has_overlay_permission(Engine& e) {
     if (e.app->activity->sdkVersion < 23) return true;
-    JNIEnv* env = e.app->activity->env;
+    JNIEnv* env = current_jni_env(e);
     jclass settings = env->FindClass("android/provider/Settings");
     if (!settings) { clear_jni_exception(env); return false; }
     jmethodID canDraw = env->GetStaticMethodID(settings, "canDrawOverlays", "(Landroid/content/Context;)Z");
@@ -409,7 +419,7 @@ bool has_overlay_permission(Engine& e) {
 }
 
 void request_overlay_permission(Engine& e) {
-    JNIEnv* env = e.app->activity->env;
+    JNIEnv* env = current_jni_env(e);
     jobject activity = e.app->activity->clazz;
     jclass intentClass = env->FindClass("android/content/Intent");
     jmethodID constructor = env->GetMethodID(intentClass, "<init>", "(Ljava/lang/String;)V");
@@ -436,7 +446,7 @@ void request_overlay_permission(Engine& e) {
 }
 
 jclass load_application_class(Engine& e, const char* dottedName) {
-    JNIEnv* env = e.app->activity->env;
+    JNIEnv* env = current_jni_env(e);
     jobject activity = e.app->activity->clazz;
     jclass activityClass = env->GetObjectClass(activity);
     jmethodID getClassLoader = env->GetMethodID(
@@ -456,7 +466,7 @@ jclass load_application_class(Engine& e, const char* dottedName) {
 }
 
 bool start_voice_service(Engine& e) {
-    JNIEnv* env = e.app->activity->env;
+    JNIEnv* env = current_jni_env(e);
     jobject activity = e.app->activity->clazz;
     jclass serviceClass = load_application_class(e, "com.jarvis.assistant.JarvisVoiceService");
     if (!serviceClass) { clear_jni_exception(env); return false; }
@@ -485,7 +495,7 @@ bool start_voice_service(Engine& e) {
 }
 
 void set_edge_overlay(Engine& e, bool visible) {
-    JNIEnv* env = e.app->activity->env;
+    JNIEnv* env = current_jni_env(e);
     jclass serviceClass = load_application_class(e, "com.jarvis.assistant.JarvisVoiceService");
     if (!serviceClass) { clear_jni_exception(env); return; }
     jmethodID method = env->GetStaticMethodID(serviceClass, "setEdgeVisible", "(Z)V");
@@ -882,7 +892,7 @@ void speak_hindi_async(Engine& e, const std::string& text) {
 
 
 uint64_t available_ram_bytes(Engine& e) {
-    JNIEnv* env = e.app->activity->env;
+    JNIEnv* env = current_jni_env(e);
     jobject activity = e.app->activity->clazz;
     jclass activityClass = env->GetObjectClass(activity);
     jmethodID getSystemService = env->GetMethodID(activityClass, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;");
@@ -1354,7 +1364,7 @@ void start_audio(Engine& e) {
 
 void launch_package(Engine& e, const char* packageName) {
     if (e.edgeOverlayVisible) { set_edge_overlay(e, false); e.edgeOverlayVisible = false; }
-    JNIEnv* env = e.app->activity->env;
+    JNIEnv* env = current_jni_env(e);
     jobject activity = e.app->activity->clazz;
     jclass contextClass = env->GetObjectClass(activity);
     jmethodID getPackageManager = env->GetMethodID(
@@ -1387,7 +1397,7 @@ void launch_package(Engine& e, const char* packageName) {
 }
 
 void change_volume(Engine& e, bool up) {
-    JNIEnv* env = e.app->activity->env;
+    JNIEnv* env = current_jni_env(e);
     jobject activity = e.app->activity->clazz;
     jclass cls = env->GetObjectClass(activity);
     jmethodID getSystemService = env->GetMethodID(
@@ -1413,7 +1423,7 @@ void change_volume(Engine& e, bool up) {
 }
 
 void launch_dialer(Engine& e) {
-    JNIEnv* env = e.app->activity->env;
+    JNIEnv* env = current_jni_env(e);
     jclass intentClass = env->FindClass("android/content/Intent");
     jmethodID constructor = env->GetMethodID(intentClass, "<init>", "(Ljava/lang/String;)V");
     jstring action = env->NewStringUTF("android.intent.action.DIAL");
@@ -1458,7 +1468,7 @@ std::string lower_contact_name(std::string value) {
 std::string encode_url_query(const std::string& value);
 
 bool launch_whatsapp_chat(Engine& e, const std::string& phone, const std::string& message) {
-    JNIEnv* env = e.app->activity->env;
+    JNIEnv* env = current_jni_env(e);
     jclass uriClass = env->FindClass("android/net/Uri");
     jmethodID parse = env->GetStaticMethodID(uriClass, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
     std::string url = "https://wa.me/" + phone;
@@ -1502,7 +1512,7 @@ void open_whatsapp_contact(Engine& e, const std::string& query, const std::strin
         return;
     }
 
-    JNIEnv* env = e.app->activity->env;
+    JNIEnv* env = current_jni_env(e);
     jobject activity = e.app->activity->clazz;
     jclass activityClass = env->GetObjectClass(activity);
     jmethodID getResolver = env->GetMethodID(activityClass, "getContentResolver", "()Landroid/content/ContentResolver;");
@@ -1676,7 +1686,7 @@ std::string encode_url_query(const std::string& value) {
 }
 
 bool open_external_url(Engine& e, const std::string& url, const char* packageName = nullptr) {
-    JNIEnv* env = e.app->activity->env;
+    JNIEnv* env = current_jni_env(e);
     jclass uriClass = env->FindClass("android/net/Uri");
     jmethodID parse = env->GetStaticMethodID(uriClass, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
     jstring urlText = env->NewStringUTF(url.c_str());
@@ -1881,6 +1891,9 @@ void android_main(android_app* app) {
                 if (engine.ttsThread.joinable()) engine.ttsThread.join();
                 jarvis::offline_llm_shutdown();
                 shutdown_gl(engine);
+                if (engine.jniAttachedByNativeThread) {
+                    engine.app->activity->vm->DetachCurrentThread();
+                }
                 return;
             }
         } while (ident >= 0);
