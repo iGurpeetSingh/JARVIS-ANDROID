@@ -67,8 +67,6 @@ struct Engine {
     bool voiceServiceStartRequested = false;
     std::chrono::steady_clock::time_point voiceServiceStartTime{};
     std::chrono::steady_clock::time_point nextVoiceServiceRetry{};
-    bool overlaySettingsRequested = false;
-    bool overlayPermissionPromptPending = false;
     bool lastVoiceServiceRunning = false;
     bool jniAttachedByNativeThread = false;
     std::string status = "NATIVE C++ CORE READY";
@@ -349,6 +347,36 @@ void clear_jni_exception(JNIEnv* env) {
     if (env->ExceptionCheck()) env->ExceptionClear();
 }
 
+jclass load_application_class(Engine& e, const char* dottedName);
+
+void request_runtime_permission(Engine& e, const char* permissionName, jint requestCode) {
+    JNIEnv* env = current_jni_env(e);
+    if (!env) return;
+    jclass bridgeClass = load_application_class(e, "com.jarvis.assistant.NativePermissionBridge");
+    if (!bridgeClass) {
+        LOGE("Could not load runtime permission bridge");
+        clear_jni_exception(env);
+        return;
+    }
+    jmethodID request = env->GetStaticMethodID(
+        bridgeClass, "requestPermission", "(Landroid/app/Activity;Ljava/lang/String;I)V");
+    if (!request) {
+        LOGE("Runtime permission bridge method is missing");
+        clear_jni_exception(env);
+        env->DeleteLocalRef(bridgeClass);
+        return;
+    }
+    jstring permission = env->NewStringUTF(permissionName);
+    env->CallStaticVoidMethod(bridgeClass, request, e.app->activity->clazz, permission, requestCode);
+    if (env->ExceptionCheck()) {
+        LOGE("Could not schedule Android runtime permission request");
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
+    env->DeleteLocalRef(permission);
+    env->DeleteLocalRef(bridgeClass);
+}
+
 bool has_audio_permission(Engine& e) {
     JNIEnv* env = current_jni_env(e);
     jobject activity = e.app->activity->clazz;
@@ -363,20 +391,7 @@ bool has_audio_permission(Engine& e) {
 }
 
 void request_audio_permission(Engine& e) {
-    JNIEnv* env = current_jni_env(e);
-    jobject activity = e.app->activity->clazz;
-    jclass cls = env->GetObjectClass(activity);
-    jclass stringClass = env->FindClass("java/lang/String");
-    jobjectArray permissions = env->NewObjectArray(1, stringClass, nullptr);
-    jstring permission = env->NewStringUTF("android.permission.RECORD_AUDIO");
-    env->SetObjectArrayElement(permissions, 0, permission);
-    jmethodID request = env->GetMethodID(cls, "requestPermissions", "([Ljava/lang/String;I)V");
-    env->CallVoidMethod(activity, request, permissions, 601);
-    clear_jni_exception(env);
-    env->DeleteLocalRef(permission);
-    env->DeleteLocalRef(permissions);
-    env->DeleteLocalRef(stringClass);
-    env->DeleteLocalRef(cls);
+    request_runtime_permission(e, "android.permission.RECORD_AUDIO", 601);
 }
 
 
@@ -394,60 +409,7 @@ bool has_contacts_permission(Engine& e) {
 }
 
 void request_contacts_permission(Engine& e) {
-    JNIEnv* env = current_jni_env(e);
-    jobject activity = e.app->activity->clazz;
-    jclass cls = env->GetObjectClass(activity);
-    jclass stringClass = env->FindClass("java/lang/String");
-    jobjectArray permissions = env->NewObjectArray(1, stringClass, nullptr);
-    jstring permission = env->NewStringUTF("android.permission.READ_CONTACTS");
-    env->SetObjectArrayElement(permissions, 0, permission);
-    jmethodID request = env->GetMethodID(cls, "requestPermissions", "([Ljava/lang/String;I)V");
-    env->CallVoidMethod(activity, request, permissions, 602);
-    clear_jni_exception(env);
-    env->DeleteLocalRef(permission);
-    env->DeleteLocalRef(permissions);
-    env->DeleteLocalRef(stringClass);
-    env->DeleteLocalRef(cls);
-}
-
-bool has_overlay_permission(Engine& e) {
-    if (e.app->activity->sdkVersion < 23) return true;
-    JNIEnv* env = current_jni_env(e);
-    jclass settings = env->FindClass("android/provider/Settings");
-    if (!settings) { clear_jni_exception(env); return false; }
-    jmethodID canDraw = env->GetStaticMethodID(settings, "canDrawOverlays", "(Landroid/content/Context;)Z");
-    if (!canDraw) { clear_jni_exception(env); env->DeleteLocalRef(settings); return false; }
-    const jboolean allowed = env->CallStaticBooleanMethod(settings, canDraw, e.app->activity->clazz);
-    clear_jni_exception(env);
-    env->DeleteLocalRef(settings);
-    return allowed == JNI_TRUE;
-}
-
-void request_overlay_permission(Engine& e) {
-    JNIEnv* env = current_jni_env(e);
-    jobject activity = e.app->activity->clazz;
-    jclass intentClass = env->FindClass("android/content/Intent");
-    jmethodID constructor = env->GetMethodID(intentClass, "<init>", "(Ljava/lang/String;)V");
-    jstring action = env->NewStringUTF("android.settings.action.MANAGE_OVERLAY_PERMISSION");
-    jobject intent = env->NewObject(intentClass, constructor, action);
-    jclass contextClass = env->GetObjectClass(activity);
-    jmethodID getPackageName = env->GetMethodID(contextClass, "getPackageName", "()Ljava/lang/String;");
-    jstring packageName = static_cast<jstring>(env->CallObjectMethod(activity, getPackageName));
-    const char* packageChars = env->GetStringUTFChars(packageName, nullptr);
-    const std::string packageUri = std::string("package:") + (packageChars ? packageChars : "");
-    if (packageChars) env->ReleaseStringUTFChars(packageName, packageChars);
-    jclass uriClass = env->FindClass("android/net/Uri");
-    jmethodID parse = env->GetStaticMethodID(uriClass, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
-    jstring uriText = env->NewStringUTF(packageUri.c_str());
-    jobject uri = env->CallStaticObjectMethod(uriClass, parse, uriText);
-    jmethodID setData = env->GetMethodID(intentClass, "setData", "(Landroid/net/Uri;)Landroid/content/Intent;");
-    env->CallObjectMethod(intent, setData, uri);
-    jmethodID startActivity = env->GetMethodID(contextClass, "startActivity", "(Landroid/content/Intent;)V");
-    env->CallVoidMethod(activity, startActivity, intent);
-    clear_jni_exception(env);
-    env->DeleteLocalRef(uri); env->DeleteLocalRef(uriText); env->DeleteLocalRef(uriClass);
-    env->DeleteLocalRef(packageName); env->DeleteLocalRef(contextClass);
-    env->DeleteLocalRef(intent); env->DeleteLocalRef(action); env->DeleteLocalRef(intentClass);
+    request_runtime_permission(e, "android.permission.READ_CONTACTS", 602);
 }
 
 jclass load_application_class(Engine& e, const char* dottedName) {
@@ -532,9 +494,6 @@ bool ensure_voice_service(Engine& e) {
     }
     e.micPermissionPending.store(false);
 
-    const bool overlayAllowed = has_overlay_permission(e);
-    if (overlayAllowed) e.overlaySettingsRequested = false;
-
     const auto now = std::chrono::steady_clock::now();
     if (e.voiceServiceStartRequested) {
         if (now - e.voiceServiceStartTime < std::chrono::seconds(8)) return true;
@@ -554,13 +513,6 @@ bool ensure_voice_service(Engine& e) {
     e.voiceServiceStartTime = now;
     set_status(e, "STARTING GURI OFFLINE VOICE LISTENER");
 
-    // Defer the optional overlay dialog until the foreground-service bridge
-    // confirms startForeground() succeeded. Opening Settings too early can
-    // background the Activity while Android is still starting the mic service.
-    if (!overlayAllowed && !e.overlaySettingsRequested) {
-        e.overlaySettingsRequested = true;
-        e.overlayPermissionPromptPending = true;
-    }
     return true;
 }
 
@@ -1998,10 +1950,6 @@ void android_main(android_app* app) {
             engine.nextVoiceServiceRetry = std::chrono::steady_clock::time_point{};
             engine.autoWakePending.store(true);
             set_status(engine, "GURI VOICE LISTENER ACTIVE - SAY GURI");
-            if (engine.overlayPermissionPromptPending && engine.hasWindowFocus.load()) {
-                engine.overlayPermissionPromptPending = false;
-                request_overlay_permission(engine);
-            }
         } else if (!voiceServiceRunning && engine.lastVoiceServiceRunning) {
             if (engine.recording.load()) stop_audio(engine);
             hide_edge_overlay(engine);
