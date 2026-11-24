@@ -34,7 +34,7 @@ G U R I is a voice-first Android assistant built with native C++17, Android NDK,
 - Exact and partial name matching, with duplicate matches requiring the user to say a more specific name.
 - Open a WhatsApp chat without sending anything.
 - Prepare a requested WhatsApp message only after GURI reads back the contact and text and receives a verbal yes/confirmation.
-- The final Send action remains manual inside WhatsApp; JARVIS does not silently send messages.
+- The final Send action remains manual inside WhatsApp; GURI does not silently send messages.
 - Open YouTube and search YouTube using parsed Hindi, Hinglish or English queries.
 - Open the phone dialer without placing a call.
 
