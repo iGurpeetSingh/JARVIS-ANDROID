@@ -19,6 +19,8 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <condition_variable>
+#include <deque>
 #include <thread>
 #include <fstream>
 #include <sys/stat.h>
@@ -45,16 +47,28 @@ struct Engine {
     GLint colorLocation = -1;
     int width = 0;
     int height = 0;
-    bool recording = false;
+    std::atomic<bool> recording{false};
     std::string status = "NATIVE C++ CORE READY";
     AAudioStream* audioStream = nullptr;
     std::atomic<int> inputPeak{0};
     std::mutex audioMutex;
     std::vector<float> recordedSamples;
-    std::mutex statusMutex;
+    std::mutex kwsMutex;
+    std::condition_variable kwsCondition;
+    std::deque<float> kwsAudioQueue;
+    std::thread kwsThread;
     std::thread asrThread;
+    std::mutex statusMutex;
     std::atomic<int> pendingCommand{0};
     std::atomic<bool> processing{false};
+    std::atomic<bool> wakeListening{false};
+    std::atomic<bool> wakeDetected{false};
+    std::atomic<bool> commandReady{false};
+    std::atomic<bool> speechStarted{false};
+    std::atomic<bool> restartWake{false};
+    std::atomic<bool> kwsFailed{false};
+    std::atomic<int> silenceFrames{0};
+    std::atomic<int> commandFrames{0};
     int32_t capturedSampleRate = 16000;
 };
 
@@ -250,7 +264,9 @@ void draw_ui(Engine& e) {
     draw_rect(e, cx-radius*0.33f, cy+radius*0.12f, radius*0.66f, radius*0.09f, 0.35f,0.88f,1.0f);
 
     const float labelScale = std::max(2.0f, std::min(4.2f, e.width/100.0f));
-    const std::string prompt = e.recording ? "MICROPHONE ACTIVE" : "TAP TO SPEAK";
+    const std::string prompt = e.processing.load() ? "PROCESSING COMMAND" :
+        (e.wakeDetected.load() ? "SPEAK YOUR COMMAND" :
+        (e.wakeListening.load() ? "SAY JARVIS" : "TAP TO LISTEN"));
     draw_text(e, prompt, (e.width - prompt.size()*4.0f*labelScale)/2.0f,
               e.height*0.65f, labelScale, 0.38f,0.85f,1.0f);
 
@@ -310,28 +326,66 @@ aaudio_data_callback_result_t audio_callback(AAudioStream*, void* userData,
     auto* e = static_cast<Engine*>(userData);
     const auto* samples = static_cast<const int16_t*>(audioData);
     int peak = 0;
-    {
-        std::lock_guard<std::mutex> lock(e->audioMutex);
-        const size_t maxSamples = static_cast<size_t>(e->capturedSampleRate) * 60;
-        for (int32_t i = 0; i < numFrames; ++i) {
-            const int value = static_cast<int>(samples[i]);
-            peak = std::max(peak, std::abs(value));
-            if (e->recordedSamples.size() < maxSamples) {
-                e->recordedSamples.push_back(static_cast<float>(value) / 32768.0f);
+    double squareSum = 0.0;
+
+    if (e->wakeListening.load(std::memory_order_relaxed)) {
+        {
+            std::lock_guard<std::mutex> lock(e->kwsMutex);
+            const size_t queueLimit = static_cast<size_t>(e->capturedSampleRate) * 4;
+            for (int32_t i = 0; i < numFrames; ++i) {
+                const float normalized = static_cast<float>(samples[i]) / 32768.0f;
+                if (e->kwsAudioQueue.size() < queueLimit) e->kwsAudioQueue.push_back(normalized);
             }
         }
+        e->kwsCondition.notify_one();
     }
+
+    if (e->wakeDetected.load(std::memory_order_relaxed) &&
+        !e->commandReady.load(std::memory_order_relaxed)) {
+        {
+            std::lock_guard<std::mutex> lock(e->audioMutex);
+            const size_t maxSamples = static_cast<size_t>(e->capturedSampleRate) * 12;
+            for (int32_t i = 0; i < numFrames; ++i) {
+                const int value = static_cast<int>(samples[i]);
+                peak = std::max(peak, std::abs(value));
+                const float normalized = static_cast<float>(value) / 32768.0f;
+                squareSum += static_cast<double>(normalized) * normalized;
+                if (e->recordedSamples.size() < maxSamples) e->recordedSamples.push_back(normalized);
+            }
+        }
+
+        e->commandFrames.fetch_add(numFrames, std::memory_order_relaxed);
+        const double rms = std::sqrt(squareSum / std::max(1, numFrames));
+        if (rms > 0.012) {
+            e->speechStarted.store(true, std::memory_order_relaxed);
+            e->silenceFrames.store(0, std::memory_order_relaxed);
+        } else if (e->speechStarted.load(std::memory_order_relaxed)) {
+            const int silent = e->silenceFrames.fetch_add(numFrames, std::memory_order_relaxed) + numFrames;
+            if (silent >= e->capturedSampleRate * 9 / 10) e->commandReady.store(true, std::memory_order_release);
+        }
+
+        if (e->commandFrames.load(std::memory_order_relaxed) >= e->capturedSampleRate * 10) {
+            e->commandReady.store(true, std::memory_order_release);
+        }
+    }
+
     e->inputPeak.store(peak, std::memory_order_relaxed);
     return AAUDIO_CALLBACK_RESULT_CONTINUE;
 }
 
 void stop_audio(Engine& e) {
+    e.recording.store(false);
+    e.wakeListening.store(false);
+    e.kwsCondition.notify_all();
+
     if (e.audioStream) {
         AAudioStream_requestStop(e.audioStream);
         AAudioStream_close(e.audioStream);
         e.audioStream = nullptr;
     }
-    e.recording = false;
+    if (e.kwsThread.joinable() && e.kwsThread.get_id() != std::this_thread::get_id()) {
+        e.kwsThread.join();
+    }
 }
 
 bool copy_asset_to_file(AAssetManager* manager, const char* assetName,
@@ -365,6 +419,89 @@ bool copy_asset_to_file(AAssetManager* manager, const char* assetName,
     output.close();
     AAsset_close(asset);
     return count == 0;
+}
+
+void run_wake_word_engine(Engine& e) {
+    const std::string modelDir = std::string(e.app->activity->internalDataPath) + "/jarvis-kws";
+    mkdir(modelDir.c_str(), 0700);
+
+    const std::string encoderPath = modelDir + "/encoder.int8.onnx";
+    const std::string decoderPath = modelDir + "/decoder.onnx";
+    const std::string joinerPath = modelDir + "/joiner.int8.onnx";
+    const std::string tokensPath = modelDir + "/tokens.txt";
+    const std::string keywordsPath = modelDir + "/keywords.txt";
+
+    const bool ready =
+        copy_asset_to_file(e.app->activity->assetManager, "jarvis-kws/encoder.int8.onnx", encoderPath) &&
+        copy_asset_to_file(e.app->activity->assetManager, "jarvis-kws/decoder.onnx", decoderPath) &&
+        copy_asset_to_file(e.app->activity->assetManager, "jarvis-kws/joiner.int8.onnx", joinerPath) &&
+        copy_asset_to_file(e.app->activity->assetManager, "jarvis-kws/tokens.txt", tokensPath) &&
+        copy_asset_to_file(e.app->activity->assetManager, "jarvis-kws/keywords.txt", keywordsPath);
+
+    if (!ready) {
+        set_status(e, "WAKE WORD MODEL ASSET ERROR");
+        e.kwsFailed.store(true);
+        e.wakeListening.store(false);
+        return;
+    }
+
+    sherpa_onnx::cxx::KeywordSpotterConfig config;
+    config.feat_config.sample_rate = 16000;
+    config.feat_config.feature_dim = 80;
+    config.model_config.transducer.encoder = encoderPath;
+    config.model_config.transducer.decoder = decoderPath;
+    config.model_config.transducer.joiner = joinerPath;
+    config.model_config.tokens = tokensPath;
+    config.model_config.model_type = "zipformer2";
+    config.model_config.provider = "cpu";
+    config.model_config.num_threads = 1;
+    config.keywords_file = keywordsPath;
+    config.keywords_score = 2.0f;
+    config.keywords_threshold = 0.25f;
+    config.max_active_paths = 4;
+
+    set_status(e, "LOADING JARVIS WAKE WORD ENGINE");
+    auto spotter = sherpa_onnx::cxx::KeywordSpotter::Create(config);
+    if (!spotter.Get()) {
+        set_status(e, "WAKE WORD MODEL FAILED TO LOAD");
+        e.kwsFailed.store(true);
+        e.wakeListening.store(false);
+        return;
+    }
+
+    auto stream = spotter.CreateStream();
+    std::vector<float> chunk;
+    chunk.reserve(1600);
+    set_status(e, "LISTENING FOR JARVIS");
+
+    while (e.wakeListening.load()) {
+        chunk.clear();
+        {
+            std::unique_lock<std::mutex> lock(e.kwsMutex);
+            e.kwsCondition.wait(lock, [&e] {
+                return !e.wakeListening.load() || e.kwsAudioQueue.size() >= 1600;
+            });
+            if (!e.wakeListening.load()) break;
+            for (int i = 0; i < 1600; ++i) {
+                chunk.push_back(e.kwsAudioQueue.front());
+                e.kwsAudioQueue.pop_front();
+            }
+        }
+
+        stream.AcceptWaveform(e.capturedSampleRate, chunk.data(), static_cast<int32_t>(chunk.size()));
+        while (spotter.IsReady(&stream)) {
+            spotter.Decode(&stream);
+            const auto result = spotter.GetResult(&stream);
+            if (!result.keyword.empty()) {
+                LOGI("Wake phrase detected: %s", result.keyword.c_str());
+                e.wakeDetected.store(true, std::memory_order_release);
+                e.wakeListening.store(false);
+                set_status(e, "JARVIS HEARD - SPEAK COMMAND");
+                e.kwsCondition.notify_all();
+                return;
+            }
+        }
+    }
 }
 
 void start_transcription(Engine& e) {
