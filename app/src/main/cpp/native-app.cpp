@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -34,13 +35,15 @@
 #include <sys/statvfs.h>
 #include <sys/types.h>
 
-#define LOG_TAG "JARVIS_NATIVE"
+#define LOG_TAG "GURI_NATIVE"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 namespace {
 
 std::atomic<bool> gVoiceServiceRunning{false};
+// Permission results arrive on Android's main thread and are consumed by the native loop.
+std::atomic<int> gMicPermissionResult{0};
 
 constexpr const char* kVertexShader =
     "attribute vec2 aPosition; void main(){ gl_Position=vec4(aPosition,0.0,1.0); }";
@@ -64,7 +67,8 @@ struct Engine {
     bool edgeOverlayVisible = false;
     bool voiceServicePending = false;
     bool voiceServiceStartRequested = false;
-    bool overlaySettingsRequested = false;
+    std::chrono::steady_clock::time_point voiceServiceStartTime{};
+    std::chrono::steady_clock::time_point nextVoiceServiceRetry{};
     bool lastVoiceServiceRunning = false;
     bool jniAttachedByNativeThread = false;
     std::string status = "NATIVE C++ CORE READY";
@@ -300,7 +304,7 @@ void draw_ui(Engine& e) {
     glClear(GL_COLOR_BUFFER_BIT);
 
     draw_rect(e, 0, 0, e.width, e.height, 0.015f,0.035f,0.075f);
-    draw_text(e, "JARVIS", e.width*0.08f, e.height*0.07f, 6.0f, 0.92f,0.97f,1.0f);
+    draw_text(e, "G U R I", e.width*0.08f, e.height*0.07f, 6.0f, 0.92f,0.97f,1.0f);
     draw_text(e, "NATIVE C++ ASSISTANT", e.width*0.08f, e.height*0.13f, 2.8f, 0.25f,0.75f,0.95f);
 
     const float cx = e.width * 0.5f;
@@ -316,7 +320,7 @@ void draw_ui(Engine& e) {
     const float labelScale = std::max(2.0f, std::min(4.2f, e.width/100.0f));
     const std::string prompt = e.processing.load() ? "PROCESSING COMMAND" :
         (e.wakeDetected.load() ? "SPEAK YOUR COMMAND" :
-        (e.wakeListening.load() ? "SAY JARVIS" : "TAP TO LISTEN"));
+        (e.wakeListening.load() ? "SAY GURI" : "TAP TO LISTEN"));
     draw_text(e, prompt, (e.width - prompt.size()*4.0f*labelScale)/2.0f,
               e.height*0.65f, labelScale, 0.38f,0.85f,1.0f);
 
@@ -345,6 +349,41 @@ void clear_jni_exception(JNIEnv* env) {
     if (env->ExceptionCheck()) env->ExceptionClear();
 }
 
+jclass load_application_class(Engine& e, const char* dottedName);
+
+void request_runtime_permission(Engine& e, const char* permissionName, jint requestCode) {
+    JNIEnv* env = current_jni_env(e);
+    if (!env) {
+        LOGE("No JNI environment available for runtime permission request");
+        return;
+    }
+    LOGI("Scheduling runtime permission request: %s (request code %d) on Android UI thread",
+         permissionName, requestCode);
+    jclass bridgeClass = load_application_class(e, "com.jarvis.assistant.NativePermissionBridge");
+    if (!bridgeClass) {
+        LOGE("Could not load runtime permission bridge");
+        clear_jni_exception(env);
+        return;
+    }
+    jmethodID request = env->GetStaticMethodID(
+        bridgeClass, "requestPermission", "(Landroid/app/Activity;Ljava/lang/String;I)V");
+    if (!request) {
+        LOGE("Runtime permission bridge method is missing");
+        clear_jni_exception(env);
+        env->DeleteLocalRef(bridgeClass);
+        return;
+    }
+    jstring permission = env->NewStringUTF(permissionName);
+    env->CallStaticVoidMethod(bridgeClass, request, e.app->activity->clazz, permission, requestCode);
+    if (env->ExceptionCheck()) {
+        LOGE("Could not schedule Android runtime permission request");
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
+    env->DeleteLocalRef(permission);
+    env->DeleteLocalRef(bridgeClass);
+}
+
 bool has_audio_permission(Engine& e) {
     JNIEnv* env = current_jni_env(e);
     jobject activity = e.app->activity->clazz;
@@ -359,20 +398,7 @@ bool has_audio_permission(Engine& e) {
 }
 
 void request_audio_permission(Engine& e) {
-    JNIEnv* env = current_jni_env(e);
-    jobject activity = e.app->activity->clazz;
-    jclass cls = env->GetObjectClass(activity);
-    jclass stringClass = env->FindClass("java/lang/String");
-    jobjectArray permissions = env->NewObjectArray(1, stringClass, nullptr);
-    jstring permission = env->NewStringUTF("android.permission.RECORD_AUDIO");
-    env->SetObjectArrayElement(permissions, 0, permission);
-    jmethodID request = env->GetMethodID(cls, "requestPermissions", "([Ljava/lang/String;I)V");
-    env->CallVoidMethod(activity, request, permissions, 601);
-    clear_jni_exception(env);
-    env->DeleteLocalRef(permission);
-    env->DeleteLocalRef(permissions);
-    env->DeleteLocalRef(stringClass);
-    env->DeleteLocalRef(cls);
+    request_runtime_permission(e, "android.permission.RECORD_AUDIO", 601);
 }
 
 
@@ -390,60 +416,7 @@ bool has_contacts_permission(Engine& e) {
 }
 
 void request_contacts_permission(Engine& e) {
-    JNIEnv* env = current_jni_env(e);
-    jobject activity = e.app->activity->clazz;
-    jclass cls = env->GetObjectClass(activity);
-    jclass stringClass = env->FindClass("java/lang/String");
-    jobjectArray permissions = env->NewObjectArray(1, stringClass, nullptr);
-    jstring permission = env->NewStringUTF("android.permission.READ_CONTACTS");
-    env->SetObjectArrayElement(permissions, 0, permission);
-    jmethodID request = env->GetMethodID(cls, "requestPermissions", "([Ljava/lang/String;I)V");
-    env->CallVoidMethod(activity, request, permissions, 602);
-    clear_jni_exception(env);
-    env->DeleteLocalRef(permission);
-    env->DeleteLocalRef(permissions);
-    env->DeleteLocalRef(stringClass);
-    env->DeleteLocalRef(cls);
-}
-
-bool has_overlay_permission(Engine& e) {
-    if (e.app->activity->sdkVersion < 23) return true;
-    JNIEnv* env = current_jni_env(e);
-    jclass settings = env->FindClass("android/provider/Settings");
-    if (!settings) { clear_jni_exception(env); return false; }
-    jmethodID canDraw = env->GetStaticMethodID(settings, "canDrawOverlays", "(Landroid/content/Context;)Z");
-    if (!canDraw) { clear_jni_exception(env); env->DeleteLocalRef(settings); return false; }
-    const jboolean allowed = env->CallStaticBooleanMethod(settings, canDraw, e.app->activity->clazz);
-    clear_jni_exception(env);
-    env->DeleteLocalRef(settings);
-    return allowed == JNI_TRUE;
-}
-
-void request_overlay_permission(Engine& e) {
-    JNIEnv* env = current_jni_env(e);
-    jobject activity = e.app->activity->clazz;
-    jclass intentClass = env->FindClass("android/content/Intent");
-    jmethodID constructor = env->GetMethodID(intentClass, "<init>", "(Ljava/lang/String;)V");
-    jstring action = env->NewStringUTF("android.settings.action.MANAGE_OVERLAY_PERMISSION");
-    jobject intent = env->NewObject(intentClass, constructor, action);
-    jclass contextClass = env->GetObjectClass(activity);
-    jmethodID getPackageName = env->GetMethodID(contextClass, "getPackageName", "()Ljava/lang/String;");
-    jstring packageName = static_cast<jstring>(env->CallObjectMethod(activity, getPackageName));
-    const char* packageChars = env->GetStringUTFChars(packageName, nullptr);
-    const std::string packageUri = std::string("package:") + (packageChars ? packageChars : "");
-    if (packageChars) env->ReleaseStringUTFChars(packageName, packageChars);
-    jclass uriClass = env->FindClass("android/net/Uri");
-    jmethodID parse = env->GetStaticMethodID(uriClass, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
-    jstring uriText = env->NewStringUTF(packageUri.c_str());
-    jobject uri = env->CallStaticObjectMethod(uriClass, parse, uriText);
-    jmethodID setData = env->GetMethodID(intentClass, "setData", "(Landroid/net/Uri;)Landroid/content/Intent;");
-    env->CallObjectMethod(intent, setData, uri);
-    jmethodID startActivity = env->GetMethodID(contextClass, "startActivity", "(Landroid/content/Intent;)V");
-    env->CallVoidMethod(activity, startActivity, intent);
-    clear_jni_exception(env);
-    env->DeleteLocalRef(uri); env->DeleteLocalRef(uriText); env->DeleteLocalRef(uriClass);
-    env->DeleteLocalRef(packageName); env->DeleteLocalRef(contextClass);
-    env->DeleteLocalRef(intent); env->DeleteLocalRef(action); env->DeleteLocalRef(intentClass);
+    request_runtime_permission(e, "android.permission.READ_CONTACTS", 602);
 }
 
 jclass load_application_class(Engine& e, const char* dottedName) {
@@ -523,26 +496,30 @@ bool ensure_voice_service(Engine& e) {
     if (!e.hasWindowFocus.load()) return false;
     if (!has_audio_permission(e)) {
         if (!e.micPermissionPending.exchange(true)) request_audio_permission(e);
-        set_status(e, "ALLOW MICROPHONE PERMISSION FOR BACKGROUND JARVIS");
+        set_status(e, "ALLOW MICROPHONE PERMISSION FOR GURI");
         return false;
     }
     e.micPermissionPending.store(false);
-    if (!has_overlay_permission(e)) {
-        if (!e.overlaySettingsRequested) {
-            e.overlaySettingsRequested = true;
-            set_status(e, "ALLOW DISPLAY OVER OTHER APPS FOR RGB EDGE LIGHT");
-            request_overlay_permission(e);
-        }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (e.voiceServiceStartRequested) {
+        if (now - e.voiceServiceStartTime < std::chrono::seconds(8)) return true;
+        e.voiceServiceStartRequested = false;
+        e.nextVoiceServiceRetry = now + std::chrono::seconds(3);
+        set_status(e, "GURI VOICE SERVICE START TIMED OUT - RETRYING");
         return false;
     }
-    e.overlaySettingsRequested = false;
-    if (e.voiceServiceStartRequested) return true;
+    if (now < e.nextVoiceServiceRetry) return false;
     if (!start_voice_service(e)) {
-        set_status(e, "BACKGROUND VOICE SERVICE COULD NOT START");
+        e.nextVoiceServiceRetry = now + std::chrono::seconds(3);
+        set_status(e, "GURI VOICE SERVICE COULD NOT START - WILL RETRY");
         return false;
     }
+
     e.voiceServiceStartRequested = true;
-    set_status(e, "STARTING BACKGROUND OFFLINE VOICE LISTENER");
+    e.voiceServiceStartTime = now;
+    set_status(e, "STARTING GURI OFFLINE VOICE LISTENER");
+
     return true;
 }
 
@@ -712,7 +689,7 @@ void run_wake_word_engine(Engine& e) {
     config.keywords_threshold = 0.25f;
     config.max_active_paths = 4;
 
-    set_status(e, "LOADING JARVIS WAKE WORD ENGINE");
+    set_status(e, "LOADING GURI WAKE WORD ENGINE");
     auto spotter = sherpa_onnx::cxx::KeywordSpotter::Create(config);
     if (!spotter.Get()) {
         set_status(e, "WAKE WORD MODEL FAILED TO LOAD");
@@ -724,7 +701,7 @@ void run_wake_word_engine(Engine& e) {
     auto stream = spotter.CreateStream();
     std::vector<float> chunk;
     chunk.reserve(1600);
-    set_status(e, "LISTENING FOR JARVIS");
+    set_status(e, "LISTENING FOR GURI");
 
     while (e.wakeListening.load()) {
         chunk.clear();
@@ -749,7 +726,7 @@ void run_wake_word_engine(Engine& e) {
                 e.wakeDetected.store(true, std::memory_order_release);
                 e.edgeOverlayPending.store(true, std::memory_order_release);
                 e.wakeListening.store(false);
-                set_status(e, "JARVIS HEARD - SPEAK COMMAND");
+                set_status(e, "GURI HEARD - SPEAK COMMAND");
                 e.kwsCondition.notify_all();
                 return;
             }
@@ -1321,16 +1298,23 @@ void start_transcription(Engine& e) {
 
 void start_audio(Engine& e) {
     try {
-    if (e.audioStream || e.recording.load()) return;
+    LOGI("start_audio requested focus=%d permission=%d service=%d",
+         e.hasWindowFocus.load() ? 1 : 0,
+         has_audio_permission(e) ? 1 : 0,
+         gVoiceServiceRunning.load(std::memory_order_acquire) ? 1 : 0);
+    if (e.audioStream || e.recording.load()) {
+        LOGI("start_audio ignored because capture is already active");
+        return;
+    }
     hide_edge_overlay(e);
     if (!e.hasWindowFocus.load() && !gVoiceServiceRunning.load(std::memory_order_acquire)) {
-        set_status(e, "MICROPHONE PAUSED - JARVIS IS NOT IN FOREGROUND");
+        set_status(e, "MICROPHONE PAUSED - GURI IS NOT IN FOREGROUND");
         return;
     }
     if (!has_audio_permission(e)) {
         e.micPermissionPending.store(true);
         request_audio_permission(e);
-        set_status(e, "ALLOW MIC PERMISSION TO START JARVIS");
+        set_status(e, "ALLOW MIC PERMISSION TO START GURI");
         return;
     }
     e.micPermissionPending.store(false);
@@ -1371,6 +1355,7 @@ void start_audio(Engine& e) {
     const aaudio_result_t openResult = AAudioStreamBuilder_openStream(builder, &e.audioStream);
     AAudioStreamBuilder_delete(builder);
     if (openResult != AAUDIO_OK || !e.audioStream) {
+        LOGE("AAudio openStream failed: %s (%d)", AAudio_convertResultToText(openResult), openResult);
         set_status(e, "FAILED TO OPEN MICROPHONE");
         e.audioStream = nullptr;
         e.wakeListening.store(false);
@@ -1387,7 +1372,8 @@ void start_audio(Engine& e) {
 
     e.recording.store(true);
     e.kwsThread = std::thread(run_wake_word_engine, std::ref(e));
-    set_status(e, "LISTENING FOR JARVIS");
+    LOGI("AAudio input capture started successfully");
+    set_status(e, "LISTENING FOR GURI");
     LOGI("Native AAudio wake-word listener started");
     } catch (const std::exception& error) {
         LOGE("Audio start failed with exception: %s", error.what());
@@ -1831,17 +1817,29 @@ void execute_command(Engine& e, jarvis::Command command, const std::string& cont
 int32_t handle_input(android_app* app, AInputEvent* event) {
     auto* e = static_cast<Engine*>(app->userData);
     if (!e || AInputEvent_getType(event) != AINPUT_EVENT_TYPE_MOTION) return 0;
-    if (AMotionEvent_getAction(event) != AMOTION_EVENT_ACTION_UP) return 1;
+
+    // Android encodes pointer-index bits into the action value. Mask the
+    // action before comparing so touch handling remains correct for every
+    // pointer configuration, not only a single-pointer ACTION_UP.
+    const int32_t action = AMotionEvent_getAction(event) & AMOTION_EVENT_ACTION_MASK;
+    if (action != AMOTION_EVENT_ACTION_UP) return 1;
 
     const float x = AMotionEvent_getX(event, 0);
     const float y = AMotionEvent_getY(event, 0);
+    LOGI("Touch release x=%.1f y=%.1f surface=%dx%d focus=%d",
+         x, y, e->width, e->height, e->hasWindowFocus.load() ? 1 : 0);
+
     const float cx = e->width * 0.5f;
     const float cy = e->height * 0.43f;
     const float radius = std::min(e->width, e->height) * 0.19f;
 
     if (std::hypot(x-cx, y-cy) <= radius) {
+        LOGI("Microphone control hit recording=%d processing=%d speaking=%d audioPermission=%d service=%d",
+             e->recording.load() ? 1 : 0, e->processing.load() ? 1 : 0,
+             e->speaking.load() ? 1 : 0, has_audio_permission(*e) ? 1 : 0,
+             gVoiceServiceRunning.load(std::memory_order_acquire) ? 1 : 0);
         if (e->speaking.load()) {
-            set_status(*e, "JARVIS IS SPEAKING");
+            set_status(*e, "GURI IS SPEAKING");
             return 1;
         }
         if (e->processing.load()) {
@@ -1850,6 +1848,7 @@ int32_t handle_input(android_app* app, AInputEvent* event) {
         }
         if (e->recording.load()) {
             const bool commandWasTriggered = e->wakeDetected.load();
+            LOGI("Microphone control stopping active capture");
             stop_audio(*e);
             if (commandWasTriggered) {
                 set_status(*e, "MIC LISTENING STOPPED - TRANSCRIBING");
@@ -1858,6 +1857,7 @@ int32_t handle_input(android_app* app, AInputEvent* event) {
                 set_status(*e, "WAKE WORD LISTENING STOPPED");
             }
         } else {
+            LOGI("Microphone control starting capture");
             start_audio(*e);
         }
         return 1;
@@ -1879,6 +1879,9 @@ int32_t handle_input(android_app* app, AInputEvent* event) {
 
 void handle_cmd(android_app* app, int32_t cmd) {
     auto* e = static_cast<Engine*>(app->userData);
+    LOGI("NativeActivity app command=%d focus=%d service=%d",
+         cmd, e->hasWindowFocus.load() ? 1 : 0,
+         gVoiceServiceRunning.load(std::memory_order_acquire) ? 1 : 0);
     switch (cmd) {
         case APP_CMD_INIT_WINDOW:
             if (app->window && init_gl(*e)) draw_ui(*e);
@@ -1890,7 +1893,7 @@ void handle_cmd(android_app* app, int32_t cmd) {
         case APP_CMD_GAINED_FOCUS:
             e->hasWindowFocus.store(true);
             if (gVoiceServiceRunning.load(std::memory_order_acquire)) e->autoWakePending.store(true);
-            else { e->voiceServicePending = true; e->voiceServiceStartRequested = false; }
+            else { e->voiceServicePending = true; }
             if (e->display != EGL_NO_DISPLAY) draw_ui(*e);
             break;
         case APP_CMD_WINDOW_RESIZED:
@@ -1957,6 +1960,20 @@ void android_main(android_app* app) {
                 return;
             }
         } while (ident >= 0);
+        const int micPermissionResult = gMicPermissionResult.exchange(0, std::memory_order_acq_rel);
+        if (micPermissionResult == 1) {
+            engine.micPermissionPending.store(false, std::memory_order_release);
+            engine.voiceServicePending = engine.hasWindowFocus.load();
+            engine.autoWakePending.store(true, std::memory_order_release);
+            set_status(engine, "MICROPHONE PERMISSION GRANTED - STARTING LISTENER");
+            LOGI("Microphone permission granted; scheduling foreground service and audio capture");
+        } else if (micPermissionResult == 2) {
+            engine.micPermissionPending.store(false, std::memory_order_release);
+            engine.autoWakePending.store(false, std::memory_order_release);
+            set_status(engine, "MICROPHONE PERMISSION DENIED - ENABLE IT IN APP SETTINGS");
+            LOGE("Microphone permission denied by user");
+        }
+
         if (engine.memoryPressure.exchange(false)) {
             if (!engine.speaking.load()) {
                 if (engine.ttsThread.joinable()) engine.ttsThread.join();
@@ -1974,12 +1991,24 @@ void android_main(android_app* app) {
         }
 
         const bool voiceServiceRunning = gVoiceServiceRunning.load(std::memory_order_acquire);
+        const auto voiceServiceNow = std::chrono::steady_clock::now();
         if (voiceServiceRunning && !engine.lastVoiceServiceRunning) {
+            engine.voiceServiceStartRequested = false;
+            engine.nextVoiceServiceRetry = std::chrono::steady_clock::time_point{};
             engine.autoWakePending.store(true);
+            set_status(engine, "GURI VOICE LISTENER ACTIVE - SAY GURI");
         } else if (!voiceServiceRunning && engine.lastVoiceServiceRunning) {
             if (engine.recording.load()) stop_audio(engine);
             hide_edge_overlay(engine);
             engine.voiceServiceStartRequested = false;
+        } else if (!voiceServiceRunning && engine.voiceServiceStartRequested &&
+                   voiceServiceNow - engine.voiceServiceStartTime >= std::chrono::seconds(8)) {
+            // startForeground() can be rejected asynchronously inside Service.onCreate().
+            // Recover instead of leaving the app permanently stuck in "starting".
+            engine.voiceServiceStartRequested = false;
+            engine.voiceServicePending = engine.hasWindowFocus.load();
+            engine.nextVoiceServiceRetry = voiceServiceNow + std::chrono::seconds(3);
+            set_status(engine, "GURI VOICE SERVICE FAILED - RETRYING SAFELY");
         }
         engine.lastVoiceServiceRunning = voiceServiceRunning;
 
@@ -2050,4 +2079,11 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_jarvis_assistant_JarvisVoiceService_nativeServiceStateChanged(
     JNIEnv*, jclass, jboolean running) {
     gVoiceServiceRunning.store(running == JNI_TRUE, std::memory_order_release);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_jarvis_assistant_GuriNativeActivity_nativePermissionResult(
+    JNIEnv*, jclass, jint requestCode, jboolean granted) {
+    if (requestCode != 601) return;
+    gMicPermissionResult.store(granted == JNI_TRUE ? 1 : 2, std::memory_order_release);
 }

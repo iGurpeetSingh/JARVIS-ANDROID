@@ -19,7 +19,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="JARVIS Assistant"
+        android:label="G U R I"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
 
@@ -30,10 +30,10 @@
             android:stopWithTask="true" />
 
         <activity
-            android:name="android.app.NativeActivity"
+            android:name=".GuriNativeActivity"
             android:configChanges="orientation|keyboardHidden|screenSize"
             android:exported="true"
-            android:label="JARVIS Assistant">
+            android:label="G U R I">
             <meta-data
                 android:name="android.app.lib_name"
                 android:value="jarvis_native_app" />

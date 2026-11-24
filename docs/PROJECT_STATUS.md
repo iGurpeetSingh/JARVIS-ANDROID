@@ -1,4 +1,4 @@
-# JARVIS Android — Engineering Progress Tracker
+# GURI Android — Engineering Progress Tracker
 
 Last reviewed: 2026-11-24
 Repository: https://github.com/iGurpeetSingh/JARVIS-ANDROID
