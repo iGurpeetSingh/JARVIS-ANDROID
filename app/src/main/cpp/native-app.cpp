@@ -42,6 +42,8 @@
 namespace {
 
 std::atomic<bool> gVoiceServiceRunning{false};
+// Permission results arrive on Android's main thread and are consumed by the native loop.
+std::atomic<int> gMicPermissionResult{0};
 
 constexpr const char* kVertexShader =
     "attribute vec2 aPosition; void main(){ gl_Position=vec4(aPosition,0.0,1.0); }";
@@ -1958,6 +1960,20 @@ void android_main(android_app* app) {
                 return;
             }
         } while (ident >= 0);
+        const int micPermissionResult = gMicPermissionResult.exchange(0, std::memory_order_acq_rel);
+        if (micPermissionResult == 1) {
+            engine.micPermissionPending.store(false, std::memory_order_release);
+            engine.voiceServicePending = engine.hasWindowFocus.load();
+            engine.autoWakePending.store(true, std::memory_order_release);
+            set_status(engine, "MICROPHONE PERMISSION GRANTED - STARTING LISTENER");
+            LOGI("Microphone permission granted; scheduling foreground service and audio capture");
+        } else if (micPermissionResult == 2) {
+            engine.micPermissionPending.store(false, std::memory_order_release);
+            engine.autoWakePending.store(false, std::memory_order_release);
+            set_status(engine, "MICROPHONE PERMISSION DENIED - ENABLE IT IN APP SETTINGS");
+            LOGE("Microphone permission denied by user");
+        }
+
         if (engine.memoryPressure.exchange(false)) {
             if (!engine.speaking.load()) {
                 if (engine.ttsThread.joinable()) engine.ttsThread.join();
@@ -2063,4 +2079,11 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_jarvis_assistant_JarvisVoiceService_nativeServiceStateChanged(
     JNIEnv*, jclass, jboolean running) {
     gVoiceServiceRunning.store(running == JNI_TRUE, std::memory_order_release);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_jarvis_assistant_GuriNativeActivity_nativePermissionResult(
+    JNIEnv*, jclass, jint requestCode, jboolean granted) {
+    if (requestCode != 601) return;
+    gMicPermissionResult.store(granted == JNI_TRUE ? 1 : 2, std::memory_order_release);
 }
