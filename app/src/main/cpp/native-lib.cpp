@@ -24,9 +24,66 @@ bool contains_any(const std::string& text,
 }
 }
 
+
+std::string extract_contact_query(const std::string& raw) {
+    const std::string text = lower_ascii(raw);
+    const std::initializer_list<const char*> markers = {
+        "search for ", "find contact ", "look up contact ",
+        "open chat with ", "message to ", "send message to ",
+        "संपर्क खोजो ", "कॉन्टैक्ट खोजो ", "कॉन्टैक्ट ढूंढो ",
+        "व्हाट्सएप पर खोजो ", "व्हाट्सऐप पर खोजो "
+    };
+
+    size_t start = std::string::npos;
+    size_t markerLength = 0;
+    for (const char* marker : markers) {
+        const size_t pos = text.find(marker);
+        if (pos != std::string::npos && (start == std::string::npos || pos < start)) {
+            start = pos;
+            markerLength = std::char_traits<char>::length(marker);
+        }
+    }
+
+    std::string candidate;
+    if (start != std::string::npos) {
+        candidate = raw.substr(start + markerLength);
+    } else {
+        const size_t englishEnd = text.find(" ko whatsapp");
+        const size_t hindiEnd = text.find(" को व्हाट्स");
+        size_t end = std::min(englishEnd, hindiEnd);
+        if (end == std::string::npos) end = (englishEnd == std::string::npos ? hindiEnd : englishEnd);
+        if (end != std::string::npos && end > 0) {
+            candidate = raw.substr(0, end);
+            const size_t whatsapp = lower_ascii(candidate).rfind("whatsapp");
+            if (whatsapp != std::string::npos) candidate.erase(whatsapp);
+        }
+    }
+
+    if (candidate.empty()) return {};
+    std::string lowerCandidate = lower_ascii(candidate);
+    const std::initializer_list<const char*> endings = {
+        " on whatsapp", " whatsapp", " please", " ko kholo",
+        " ko kholo", " को खोलो", " को खोल", " को व्हाट्स",
+        " पर खोलो", " पर खोल", " open whatsapp"
+    };
+    size_t trimAt = candidate.size();
+    for (const char* ending : endings) {
+        const size_t pos = lowerCandidate.find(ending);
+        if (pos != std::string::npos) trimAt = std::min(trimAt, pos);
+    }
+    candidate.resize(trimAt);
+
+    const auto isSpace = [](unsigned char ch) { return std::isspace(ch) || ch == ',' || ch == '.'; };
+    while (!candidate.empty() && isSpace(static_cast<unsigned char>(candidate.front()))) candidate.erase(candidate.begin());
+    while (!candidate.empty() && isSpace(static_cast<unsigned char>(candidate.back()))) candidate.pop_back();
+    if (candidate.size() > 64) candidate.resize(64);
+    return candidate;
+}
+
 namespace jarvis {
 Command classify_command(const std::string& raw) {
     const std::string text = lower_ascii(raw);
+    if (!extract_contact_query(raw).empty()) return Command::OpenWhatsAppContact;
 
     if (contains_any(text, {"volume up", "increase volume", "turn up volume", "volume badhao",
                             "awaz badhao", "आवाज बढ़", "वॉल्यूम बढ़", "आवाज़ बढ़",
