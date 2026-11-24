@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(jarvis_native_app LANGUAGES C CXX)
 
+include(FetchContent)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -53,8 +56,6 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(piper_phonemize_source)
 
 # Offline local language model runtime (llama.cpp C API).
-include(FetchContent)
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_COMMON OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
