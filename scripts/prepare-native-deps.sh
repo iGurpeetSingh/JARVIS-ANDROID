@@ -95,6 +95,61 @@ with open(output_path, "w", encoding="utf-8") as output:
 print("Generated wake phrases:", phrases)
 PY
 
+echo "[JARVIS] Downloading native C++ Piper phonemizer for Hindi speech output"
+PIPER_URL="https://github.com/csukuangfj/piper-phonemize/releases/download/v1.6.1/piper-phonemize-v1.6.1-android.tar.bz2"
+curl --fail --location --retry 3 "$PIPER_URL" -o "$TMP_DIR/piper-phonemize-android.tar.bz2"
+mkdir -p "$TMP_DIR/piper"
+tar -xjf "$TMP_DIR/piper-phonemize-android.tar.bz2" -C "$TMP_DIR/piper"
+
+PIPER_CXX_LIB="$(find "$TMP_DIR/piper" -type f -name 'libpiper_phonemize_cxx_api.so' -print -quit)"
+if [[ -z "$PIPER_CXX_LIB" ]]; then
+  echo "Piper C++ phonemizer Android archive did not contain libpiper_phonemize_cxx_api.so."
+  find "$TMP_DIR/piper" -type f | head -100
+  exit 1
+fi
+PIPER_LIB_DIR="$(dirname "$PIPER_CXX_LIB")"
+cp "$PIPER_LIB_DIR"/*.so "$ROOT/app/src/main/jniLibs/arm64-v8a/"
+
+PIPER_HEADER_DIR="$ROOT/app/src/main/cpp/vendor/piper/include/piper-phonemize"
+mkdir -p "$PIPER_HEADER_DIR"
+curl --fail --location --retry 3 \
+  "https://raw.githubusercontent.com/csukuangfj/piper-phonemize/v1.6.1/src/cxx-api.h" \
+  -o "$PIPER_HEADER_DIR/cxx-api.h"
+curl --fail --location --retry 3 \
+  "https://raw.githubusercontent.com/csukuangfj/piper-phonemize/v1.6.1/src/c-api.h" \
+  -o "$PIPER_HEADER_DIR/c-api.h"
+
+echo "[JARVIS] Downloading Hindi male Piper voice (Rohan, int8)"
+HINDI_TTS_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-hi_IN-rohan-medium-int8.tar.bz2"
+curl --fail --location --retry 3 "$HINDI_TTS_URL" -o "$TMP_DIR/hindi-tts.tar.bz2"
+mkdir -p "$TMP_DIR/hindi-tts"
+tar -xjf "$TMP_DIR/hindi-tts.tar.bz2" -C "$TMP_DIR/hindi-tts"
+
+HINDI_TTS_MODEL="$(find "$TMP_DIR/hindi-tts" -type f -name 'hi_IN-rohan-medium-int8.onnx' -print -quit)"
+HINDI_TTS_TOKENS="$(find "$TMP_DIR/hindi-tts" -type f -name 'tokens.txt' -print -quit)"
+if [[ -z "$HINDI_TTS_MODEL" || -z "$HINDI_TTS_TOKENS" ]]; then
+  echo "Hindi Piper TTS package did not contain the expected model and tokens."
+  find "$TMP_DIR/hindi-tts" -type f | head -100
+  exit 1
+fi
+mkdir -p "$ROOT/app/src/main/assets/jarvis-tts"
+cp "$HINDI_TTS_MODEL" "$ROOT/app/src/main/assets/jarvis-tts/model.int8.onnx"
+cp "$HINDI_TTS_TOKENS" "$ROOT/app/src/main/assets/jarvis-tts/tokens.txt"
+
+echo "[JARVIS] Downloading bundled espeak-ng phoneme data"
+ESPEAK_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/espeak-ng-data.tar.bz2"
+curl --fail --location --retry 3 "$ESPEAK_URL" -o "$TMP_DIR/espeak-ng-data.tar.bz2"
+mkdir -p "$TMP_DIR/espeak"
+tar -xjf "$TMP_DIR/espeak-ng-data.tar.bz2" -C "$TMP_DIR/espeak"
+ESPEAK_PHONTAB="$(find "$TMP_DIR/espeak" -type f -name phontab -print -quit)"
+if [[ -z "$ESPEAK_PHONTAB" ]]; then
+  echo "espeak-ng-data archive does not contain phontab."
+  find "$TMP_DIR/espeak" -type f | head -100
+  exit 1
+fi
+ESPEAK_DATA_DIR="$(dirname "$ESPEAK_PHONTAB")"
+cp -R "$ESPEAK_DATA_DIR" "$ROOT/app/src/main/assets/espeak-ng-data"
+
 echo "[JARVIS] Native dependency preparation complete."
 du -h "$ROOT/app/src/main/jniLibs/arm64-v8a/"*.so \
-  "$ROOT/app/src/main/assets/sherpa-whisper-tiny/"* "$ROOT/app/src/main/assets/jarvis-kws/"*
+  "$ROOT/app/src/main/assets/sherpa-whisper-tiny/"* "$ROOT/app/src/main/assets/jarvis-kws/"* "$ROOT/app/src/main/assets/jarvis-tts/"*
