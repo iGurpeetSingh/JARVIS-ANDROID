@@ -16,6 +16,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cctype>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -934,8 +935,215 @@ void launch_dialer(Engine& e) {
     env->DeleteLocalRef(intentClass);
 }
 
-void execute_command(Engine& e, jarvis::Command command) {
+struct ContactMatch { std::string name; std::string number; };
+
+bool has_contacts_permission(Engine& e) {
+    JNIEnv* env = e.app->activity->env;
+    jobject activity = e.app->activity->clazz;
+    jclass cls = env->GetObjectClass(activity);
+    jmethodID check = env->GetMethodID(cls, "checkSelfPermission", "(Ljava/lang/String;)I");
+    jstring permission = env->NewStringUTF("android.permission.READ_CONTACTS");
+    jint result = env->CallIntMethod(activity, check, permission);
+    clear_jni_exception(env);
+    env->DeleteLocalRef(permission);
+    env->DeleteLocalRef(cls);
+    return result == 0;
+}
+
+void request_contacts_permission(Engine& e) {
+    JNIEnv* env = e.app->activity->env;
+    jobject activity = e.app->activity->clazz;
+    jclass cls = env->GetObjectClass(activity);
+    jclass stringClass = env->FindClass("java/lang/String");
+    jobjectArray permissions = env->NewObjectArray(1, stringClass, nullptr);
+    jstring permission = env->NewStringUTF("android.permission.READ_CONTACTS");
+    env->SetObjectArrayElement(permissions, 0, permission);
+    jmethodID request = env->GetMethodID(cls, "requestPermissions", "([Ljava/lang/String;I)V");
+    env->CallVoidMethod(activity, request, permissions, 602);
+    clear_jni_exception(env);
+    env->DeleteLocalRef(permission);
+    env->DeleteLocalRef(permissions);
+    env->DeleteLocalRef(stringClass);
+    env->DeleteLocalRef(cls);
+}
+
+std::string jstring_to_utf8(JNIEnv* env, jstring value) {
+    if (!value) return {};
+    const char* chars = env->GetStringUTFChars(value, nullptr);
+    if (!chars) { clear_jni_exception(env); return {}; }
+    std::string text(chars);
+    env->ReleaseStringUTFChars(value, chars);
+    return text;
+}
+
+std::string normalize_contact_number(const std::string& value) {
+    std::string digits;
+    for (unsigned char ch : value) if (std::isdigit(ch)) digits.push_back(static_cast<char>(ch));
+    if (digits.size() == 11 && digits.front() == '0') digits.erase(digits.begin());
+    if (digits.size() == 10) digits = "91" + digits;
+    return digits;
+}
+
+std::string lower_contact_name(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char ch) { return ch < 0x80 ? static_cast<char>(std::tolower(ch)) : static_cast<char>(ch); });
+    return value;
+}
+
+bool launch_whatsapp_chat(Engine& e, const std::string& phone) {
+    JNIEnv* env = e.app->activity->env;
+    jclass uriClass = env->FindClass("android/net/Uri");
+    jmethodID parse = env->GetStaticMethodID(uriClass, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
+    const std::string url = "https://wa.me/" + phone + "?text=Hi";
+    jstring urlValue = env->NewStringUTF(url.c_str());
+    jobject uri = env->CallStaticObjectMethod(uriClass, parse, urlValue);
+    clear_jni_exception(env);
+
+    jclass intentClass = env->FindClass("android/content/Intent");
+    jmethodID constructor = env->GetMethodID(intentClass, "<init>", "(Ljava/lang/String;)V");
+    jstring action = env->NewStringUTF("android.intent.action.VIEW");
+    jobject intent = env->NewObject(intentClass, constructor, action);
+    jmethodID setData = env->GetMethodID(intentClass, "setData", "(Landroid/net/Uri;)Landroid/content/Intent;");
+    env->CallObjectMethod(intent, setData, uri);
+    jclass activityClass = env->GetObjectClass(e.app->activity->clazz);
+    jmethodID startActivity = env->GetMethodID(activityClass, "startActivity", "(Landroid/content/Intent;)V");
+    env->CallVoidMethod(e.app->activity->clazz, startActivity, intent);
+    const bool success = !env->ExceptionCheck();
+    clear_jni_exception(env);
+
+    env->DeleteLocalRef(activityClass);
+    env->DeleteLocalRef(intent);
+    env->DeleteLocalRef(action);
+    env->DeleteLocalRef(intentClass);
+    env->DeleteLocalRef(uri);
+    env->DeleteLocalRef(urlValue);
+    env->DeleteLocalRef(uriClass);
+    return success;
+}
+
+void open_whatsapp_contact(Engine& e, const std::string& query) {
+    if (query.empty()) {
+        set_status(e, "CONTACT NAME NOT RECOGNIZED");
+        speak_hindi_async(e, "कृपया संपर्क का नाम बताइए।");
+        return;
+    }
+    if (!has_contacts_permission(e)) {
+        set_status(e, "CONTACTS PERMISSION REQUIRED");
+        request_contacts_permission(e);
+        speak_hindi_async(e, "संपर्क खोजने के लिए कॉन्टैक्ट अनुमति दें, फिर नाम दोबारा बोलें।");
+        return;
+    }
+
+    JNIEnv* env = e.app->activity->env;
+    jobject activity = e.app->activity->clazz;
+    jclass activityClass = env->GetObjectClass(activity);
+    jmethodID getResolver = env->GetMethodID(activityClass, "getContentResolver", "()Landroid/content/ContentResolver;");
+    jobject resolver = env->CallObjectMethod(activity, getResolver);
+    clear_jni_exception(env);
+    if (!resolver) {
+        set_status(e, "CONTACT PROVIDER UNAVAILABLE");
+        env->DeleteLocalRef(activityClass);
+        return;
+    }
+
+    jclass uriClass = env->FindClass("android/net/Uri");
+    jmethodID parse = env->GetStaticMethodID(uriClass, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
+    jstring uriText = env->NewStringUTF("content://com.android.contacts/data/phones");
+    jobject uri = env->CallStaticObjectMethod(uriClass, parse, uriText);
+    jclass stringClass = env->FindClass("java/lang/String");
+    jobjectArray projection = env->NewObjectArray(2, stringClass, nullptr);
+    jstring nameColumn = env->NewStringUTF("display_name");
+    jstring numberColumn = env->NewStringUTF("data1");
+    env->SetObjectArrayElement(projection, 0, nameColumn);
+    env->SetObjectArrayElement(projection, 1, numberColumn);
+    jclass resolverClass = env->GetObjectClass(resolver);
+    jmethodID queryMethod = env->GetMethodID(resolverClass, "query", "(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;");
+    jobject cursor = env->CallObjectMethod(resolver, queryMethod, uri, projection, nullptr, nullptr, nullptr);
+    clear_jni_exception(env);
+
+    std::vector<ContactMatch> exact;
+    std::vector<ContactMatch> partial;
+    if (cursor) {
+        jclass cursorClass = env->GetObjectClass(cursor);
+        jmethodID getColumnIndex = env->GetMethodID(cursorClass, "getColumnIndex", "(Ljava/lang/String;)I");
+        jmethodID moveToNext = env->GetMethodID(cursorClass, "moveToNext", "()Z");
+        jmethodID getString = env->GetMethodID(cursorClass, "getString", "(I)Ljava/lang/String;");
+        jmethodID close = env->GetMethodID(cursorClass, "close", "()V");
+        const jint nameIndex = env->CallIntMethod(cursor, getColumnIndex, nameColumn);
+        const jint numberIndex = env->CallIntMethod(cursor, getColumnIndex, numberColumn);
+        const std::string needle = lower_contact_name(query);
+        while (env->CallBooleanMethod(cursor, moveToNext)) {
+            jstring nameValue = static_cast<jstring>(env->CallObjectMethod(cursor, getString, nameIndex));
+            jstring numberValue = static_cast<jstring>(env->CallObjectMethod(cursor, getString, numberIndex));
+            const std::string name = jstring_to_utf8(env, nameValue);
+            const std::string number = jstring_to_utf8(env, numberValue);
+            if (nameValue) env->DeleteLocalRef(nameValue);
+            if (numberValue) env->DeleteLocalRef(numberValue);
+            if (name.empty() || number.empty()) continue;
+            const std::string candidate = lower_contact_name(name);
+            if (candidate == needle) exact.push_back({name, number});
+            else if (candidate.find(needle) != std::string::npos || needle.find(candidate) != std::string::npos) partial.push_back({name, number});
+        }
+        env->CallVoidMethod(cursor, close);
+        env->DeleteLocalRef(cursorClass);
+    }
+
+    env->DeleteLocalRef(resolverClass);
+    env->DeleteLocalRef(numberColumn);
+    env->DeleteLocalRef(nameColumn);
+    env->DeleteLocalRef(projection);
+    env->DeleteLocalRef(stringClass);
+    env->DeleteLocalRef(uri);
+    env->DeleteLocalRef(uriText);
+    env->DeleteLocalRef(uriClass);
+    env->DeleteLocalRef(resolver);
+    env->DeleteLocalRef(activityClass);
+    clear_jni_exception(env);
+
+    auto deduplicate = [](std::vector<ContactMatch>& items) {
+        std::vector<ContactMatch> unique;
+        for (const auto& item : items) {
+            const std::string phone = normalize_contact_number(item.number);
+            const bool already = std::any_of(unique.begin(), unique.end(), [&](const ContactMatch& saved) {
+                return normalize_contact_number(saved.number) == phone;
+            });
+            if (!already) unique.push_back(item);
+        }
+        items.swap(unique);
+    };
+    deduplicate(exact);
+    deduplicate(partial);
+    std::vector<ContactMatch>& matches = exact.empty() ? partial : exact;
+    if (matches.empty()) {
+        set_status(e, "WHATSAPP CONTACT NOT FOUND");
+        speak_hindi_async(e, "यह संपर्क नहीं मिला। कृपया नाम दोबारा बोलें।");
+        return;
+    }
+    if (matches.size() > 1) {
+        set_status(e, "MULTIPLE CONTACTS - SAY FULL NAME");
+        speak_hindi_async(e, "इस नाम से कई संपर्क मिले हैं। कृपया पूरा नाम बोलिए।");
+        return;
+    }
+    const std::string phone = normalize_contact_number(matches.front().number);
+    if (phone.size() < 10) {
+        set_status(e, "INVALID CONTACT PHONE NUMBER");
+        speak_hindi_async(e, "इस संपर्क का फोन नंबर सही नहीं है।");
+        return;
+    }
+    if (launch_whatsapp_chat(e, phone)) {
+        set_status(e, "WHATSAPP CHAT OPENED - HI PREFILLED");
+        speak_hindi_async(e, matches.front().name + " की व्हाट्सऐप चैट खुल गई है। संदेश भेजने के लिए भेजें दबाएँ।");
+    } else {
+        set_status(e, "WHATSAPP CHAT COULD NOT OPEN");
+        speak_hindi_async(e, "व्हाट्सऐप चैट नहीं खुल सकी।");
+    }
+}
+
+void execute_command(Engine& e, jarvis::Command command, const std::string& contactQuery = {}) {
     switch (command) {
+        case jarvis::Command::OpenWhatsAppContact:
+            open_whatsapp_contact(e, contactQuery);
+            break;
         case jarvis::Command::OpenWhatsApp:
             launch_package(e, "com.whatsapp");
             speak_hindi_async(e, "व्हाट्सऐप खोल रहा हूँ।");
