@@ -89,9 +89,9 @@ public final class JarvisVoiceService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
-        // Android may recreate the service after reclaiming its process. The
-        // NativeActivity remains the owner of the native audio engine.
-        return START_STICKY;
+        // Do not recreate this bridge without its NativeActivity-owned
+        // native engine; the Activity will start it again when foregrounded.
+        return START_NOT_STICKY;
     }
 
     @Override public IBinder onBind(Intent intent) { return null; }
