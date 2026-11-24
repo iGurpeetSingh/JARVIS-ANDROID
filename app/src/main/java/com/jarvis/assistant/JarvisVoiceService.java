@@ -44,7 +44,11 @@ public final class JarvisVoiceService extends Service {
 
     public static void setEdgeVisible(final boolean visible) {
         final JarvisVoiceService service = instance;
-        if (service == null) return;
+        if (service == null) {
+            android.util.Log.w("JARVIS_SERVICE",
+                    "RGB edge request received before voice service initialization");
+            return;
+        }
         service.mainHandler.post(() -> {
             if (service.edgeOverlay == null) return;
             if (visible) service.edgeOverlay.show();
@@ -149,14 +153,20 @@ public final class JarvisVoiceService extends Service {
         private EdgeLightView view;
 
         void show() {
-            if (view != null || windowManager == null) return;
+            if (view != null) return;
+            if (windowManager == null) {
+                android.util.Log.e("JARVIS_SERVICE", "WindowManager is unavailable; RGB edge light cannot be displayed");
+                return;
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-                    !Settings.canDrawOverlays(JarvisVoiceService.this)) return;
+                    !Settings.canDrawOverlays(JarvisVoiceService.this)) {
+                android.util.Log.w("JARVIS_SERVICE", "Overlay permission is disabled; RGB edge light was not displayed");
+                return;
+            }
             EdgeLightView next = new EdgeLightView(JarvisVoiceService.this);
             int flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                     | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                     | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                    | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
                     | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED;
             WindowManager.LayoutParams params = new WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT,
@@ -174,6 +184,7 @@ public final class JarvisVoiceService extends Service {
             try {
                 windowManager.addView(next, params);
                 view = next;
+                android.util.Log.i("JARVIS_SERVICE", "RGB edge light overlay attached");
             } catch (WindowManager.BadTokenException | SecurityException error) {
                 android.util.Log.e("JARVIS_SERVICE", "Could not show RGB edge overlay", error);
             }
@@ -187,6 +198,7 @@ public final class JarvisVoiceService extends Service {
                 // The system may already have removed the overlay window.
             }
             view = null;
+            android.util.Log.i("JARVIS_SERVICE", "RGB edge light overlay detached");
         }
     }
 
