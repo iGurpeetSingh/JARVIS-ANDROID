@@ -10,6 +10,7 @@ import android.util.Log;
  */
 public final class GuriNativeActivity extends NativeActivity {
     private static final String TAG = "GURI_ACTIVITY";
+    private static native void nativePermissionResult(int requestCode, boolean granted);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -57,7 +58,14 @@ public final class GuriNativeActivity extends NativeActivity {
                 ? (grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED
                     ? "granted" : "denied")
                 : "no-result";
+        boolean granted = grantResults != null && grantResults.length > 0
+                && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED;
         Log.i(TAG, "Permission callback requestCode=" + requestCode
                 + " permission=" + permission + " result=" + result);
+        try {
+            nativePermissionResult(requestCode, granted);
+        } catch (UnsatisfiedLinkError error) {
+            Log.e(TAG, "Native permission callback bridge is unavailable", error);
+        }
     }
 }
