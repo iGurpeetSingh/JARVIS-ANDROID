@@ -25,6 +25,13 @@ endif()
 if(NOT EXISTS "${SHERPA_LIB_DIR}/libonnxruntime.so")
     message(FATAL_ERROR "Missing ONNX Runtime native library. Run scripts/prepare-native-deps.sh first.")
 endif()
+if(NOT EXISTS "${SHERPA_LIB_DIR}/libpiper_phonemize_cxx_api.so" OR
+   NOT EXISTS "${SHERPA_LIB_DIR}/libpiper_phonemize_core.so")
+    message(FATAL_ERROR "Missing Piper C++ phonemizer libraries. Run scripts/prepare-native-deps.sh first.")
+endif()
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/piper/include/piper-phonemize/cxx-api.h")
+    message(FATAL_ERROR "Missing Piper C++ phonemizer headers. Run scripts/prepare-native-deps.sh first.")
+endif()
 
 add_library(native_app_glue STATIC
     "${NATIVE_APP_GLUE_DIR}/android_native_app_glue.c"
@@ -41,6 +48,16 @@ set_target_properties(onnxruntime PROPERTIES
     IMPORTED_LOCATION "${SHERPA_LIB_DIR}/libonnxruntime.so"
 )
 
+add_library(piper-phonemize-core SHARED IMPORTED)
+set_target_properties(piper-phonemize-core PROPERTIES
+    IMPORTED_LOCATION "${SHERPA_LIB_DIR}/libpiper_phonemize_core.so"
+)
+
+add_library(piper-phonemize-cxx-api SHARED IMPORTED)
+set_target_properties(piper-phonemize-cxx-api PROPERTIES
+    IMPORTED_LOCATION "${SHERPA_LIB_DIR}/libpiper_phonemize_cxx_api.so"
+)
+
 add_library(jarvis_native_app SHARED
     native-app.cpp
     native-lib.cpp
@@ -49,6 +66,7 @@ add_library(jarvis_native_app SHARED
 target_include_directories(jarvis_native_app PRIVATE
     "${NATIVE_APP_GLUE_DIR}"
     "${SHERPA_INCLUDE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/vendor/piper/include"
 )
 
 find_library(android-lib android)
@@ -61,6 +79,8 @@ target_link_libraries(jarvis_native_app
     native_app_glue
     sherpa-onnx-cxx-api
     onnxruntime
+    piper-phonemize-cxx-api
+    piper-phonemize-core
     ${android-lib}
     ${log-lib}
     ${egl-lib}
