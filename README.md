@@ -1,68 +1,95 @@
-# JARVIS-ANDROID — Native C++ Android Assistant
+# JARVIS-ANDROID — Native C++ Android AI Assistant
 
-The Android application code is **native C++17**. Kotlin source files, Java Activity source files, Kotlin Gradle plugins, Kotlin DSL Gradle files, Jetpack Compose and AndroidX Compose dependencies have been removed.
+JARVIS is a voice-first Android assistant built with native C++17, Android NDK, NativeActivity and CMake. The application logic, dashboard, voice pipeline, command routing and AI orchestration remain in C++.
 
-## Native application architecture
+## Non-negotiable architecture
 
-- **C++17 + Android NDK + CMake:** application entry point, command recognition, audio capture, ASR inference and system-action orchestration.
-- **Android NativeActivity + NDK native_app_glue:** lifecycle and input integration without an app-authored Kotlin/Java Activity.
-- **OpenGL ES 2.0:** native C++ dashboard rendering.
-- **AAudio:** 16 kHz mono PCM microphone capture.
-- **Sherpa-ONNX C++ API 2.0.3 + ONNX Runtime:** on-device offline Whisper ASR.
-- **Whisper Tiny multilingual int8 model:** offline speech-to-text model packaged in the APK. Hindi and other multilingual recognition is requested using Whisper's automatic language detection.
-- **JNI calls from C++:** invoke Android platform APIs for runtime permission, launching apps and media-volume control.
-- **Groovy Gradle files:** Android packaging/build configuration only; no Kotlin application source or Kotlin plugin remains.
+- Native C++17 application logic.
+- Android NativeActivity and NDK native_app_glue.
+- OpenGL ES dashboard renderer.
+- AAudio microphone capture and playback.
+- JNI calls from C++ for Android platform APIs.
+- Sherpa-ONNX C++ API and ONNX Runtime for offline speech recognition, keyword spotting and speech generation.
+- Piper phonemizer compiled for Android using CMake/NDK.
+- llama.cpp native runtime for local GGUF inference.
+- Groovy Gradle and AndroidManifest are used only for Android packaging and platform configuration.
+- No Kotlin application source, Java application source, Kotlin Gradle plugin or Compose dependency.
 
-## Implemented and build-verified
+## Implemented code paths
 
-- Native C++ NativeActivity launcher.
-- Native OpenGL dashboard and microphone/WhatsApp/YouTube touch controls.
-- Native AAudio microphone capture at 16 kHz mono PCM.
-- Offline Whisper Tiny multilingual speech-to-text from captured audio.
-- Native C++ command classification for volume up/down, opening WhatsApp, opening YouTube and dialer intent recognition.
-- Native Android platform calls for opening WhatsApp/YouTube and media volume control.
-- Kotlin-free CI source check.
-- Debug APK built and uploaded using GitHub Actions.
+### Voice pipeline
 
-## How voice input currently works
+- Foreground focus requests microphone permission and starts the native wake-word listener once permission is granted.
+- Streaming keyword spotting is configured for JARVIS and HEY JARVIS.
+- After wake detection, a VAD-style RMS/silence gate captures the spoken command.
+- Capture stops after approximately 0.9 seconds of silence after speech, or a 10-second command safety limit.
+- Whisper Tiny multilingual runs locally for Hindi, English and Hinglish speech-to-text.
+- The wake listener pauses when the app loses foreground focus and can restart when focus returns.
 
-1. Tap the central microphone control to start recording.
-2. Speak a short Hindi, English or mixed-language command.
-3. Tap the microphone again to stop recording.
-4. The app runs Whisper Tiny locally, without sending microphone audio to a remote speech service.
-5. The recognized text is passed to the native C++ command classifier. Recognized supported commands execute their Android action.
+### Native commands
 
-The current input is **tap-to-record and tap-to-transcribe**. It is not an always-on wake-word listener yet. The offline model and Sherpa-ONNX runtime are packaged with the arm64-v8a debug APK; first use copies model assets to the app-private files directory.
+- Volume up/down.
+- Open WhatsApp.
+- Search contacts through Android Contacts Provider.
+- Exact and partial name matching, with duplicate matches requiring the user to say a more specific name.
+- Open a WhatsApp chat without sending anything.
+- Prepare a requested WhatsApp message only after JARVIS reads back the contact and text and receives a verbal yes/confirmation.
+- The final Send action remains manual inside WhatsApp; JARVIS does not silently send messages.
+- Open YouTube and search YouTube using parsed Hindi, Hinglish or English queries.
+- Open the phone dialer without placing a call.
 
-## Not yet complete
+### Hindi voice output
 
-- Always-on "Jarvis" wake-word detection and background foreground-service operation.
-- Voice activity detection / automatic end-of-utterance detection; the user currently taps again to stop recording.
-- Hindi/English spoken response (TTS) using a bundled native voice.
-- Online AI provider connection and user-configured credentials.
-- Offline LLM conversation runtime.
-- WhatsApp contact lookup by name, resolving similar contacts, opening the chosen chat and user-confirmed message sending. Current feature only launches WhatsApp.
-- YouTube voice search.
-- Motorola physical-device testing, battery/performance profiling and production signing.
+- Sherpa-ONNX VITS/Piper Hindi voice model.
+- Piper phonemization with bundled eSpeak NG data.
+- Generated speech is played through AAudio.
+- Voice output is integrated in code but pronunciation, interruptions and reliability still require Motorola device testing.
 
-## Build
+### Offline AI
 
-Run `bash scripts/prepare-native-deps.sh` before the Android build. The script downloads the pinned Sherpa-ONNX Android native libraries and the multilingual Whisper Tiny model, validates the Sherpa runtime archive checksum, and places native libraries/headers/model assets in generated build input directories.
+- llama.cpp is included as a native C++ dependency.
+- Qwen3 0.6B Q4_K_M GGUF can be downloaded from the app using the Offline AI setup area.
+- The model is not bundled in the APK; first download requires internet and sufficient storage.
+- The download reports progress, uses connection/read timeouts and verifies the final file against a pinned SHA-256 digest before enabling inference.
+- Local inference keeps up to four recent conversation turns in process memory.
+- Prompt length is bounded to fit the model context and old turns are dropped before rejecting an oversized prompt.
+- The model can answer general questions offline after a successful download and load.
+- Model load time, RAM use and inference speed depend on the target Motorola model and available memory.
 
-Then run:
+## Current platform limitation
 
-`gradle --no-daemon :app:assembleDebug`
+The current architecture uses NativeActivity and does not include an Android Service component. Therefore wake-word listening is foreground-only. When JARVIS loses foreground focus, audio capture is stopped. It is not a screen-off or persistent background assistant. A fully backgrounded Android foreground service has a platform component requirement that conflicts with the project's strict C++-only application-source requirement. Do not silently add Kotlin/Java to bypass this.
 
-The build targets `arm64-v8a` for current Motorola/64-bit Android devices. GitHub Actions runs the dependency preparation, verifies that no Kotlin/Java app sources or Kotlin/Compose Gradle dependencies exist, builds the APK and uploads `jarvis-android-debug-apk`.
+## Build requirements
 
-The debug APK is a test build, not a signed production release.
+1. Run scripts/prepare-native-deps.sh.
+2. Build with Gradle using :app:assembleDebug.
+3. The current ABI filter is arm64-v8a.
+4. The minimum Android API is 28; compile SDK is 35; NDK is 27.2.12479018.
 
-## Native C++ next milestones
+GitHub Actions runs native command-engine regression tests, prepares Sherpa/model assets, checks the absence of Kotlin/Java app sources and Kotlin/Compose Gradle dependencies, and builds/uploads the debug APK.
 
-1. Add open-vocabulary "Jarvis" wake-word detection to the live microphone audio stream.
-2. Add VAD and hands-free command capture after the wake word.
-3. Add native Hindi/English speech synthesis.
-4. Add offline LLM runtime and a model-size/device compatibility profile.
-5. Add optional online AI through a user-configured provider.
-6. Implement safe, permission-aware WhatsApp contact workflows and test on the Motorola device.
-7. Add automated tests, crash recovery, battery profiling, privacy disclosures and release signing.
+## Verification policy
+
+A successful CI build proves compilation and packaging for the code revision that triggered that run. It does not prove runtime behavior on a Motorola device. Features count as device-verified only after physical-device testing and recorded results.
+
+## Remaining work
+
+- Verify the latest code revision with a fresh full CI build after the latest WhatsApp confirmation, LLM context and model integrity changes.
+- Install and test the latest APK on the target Motorola device.
+- Validate wake-word accuracy, false activations, VAD timing and command capture in real environments.
+- Validate Hindi ASR quality and TTS pronunciation on-device.
+- Test contact matching on actual address books, including duplicate names and international phone formats.
+- Test WhatsApp confirmation, prefilled text and manual-send behavior.
+- Test YouTube search intents with and without YouTube installed.
+- Download the full Qwen model, verify SHA-256, measure RAM/thermal behavior and test local inference.
+- Add optional online AI only after a provider, credential-entry UX and secure secret-storage design are approved.
+- Decide whether background service behavior can be supported without violating the strict C++ application-source requirement.
+- Complete lifecycle, privacy, crash-recovery, long-duration and production-signing checks.
+
+## Last historical verified CI
+
+Run 45375534996 successfully built and uploaded a debug APK for commit cc5b4b01c9b3dde01aacd164ff8d0c0c6ecd074a. Newer changes must be verified by their own CI run before being called build-verified.
+
+Repository: https://github.com/iGurpeetSingh/JARVIS-ANDROID
+Actions: https://github.com/iGurpeetSingh/JARVIS-ANDROID/actions
