@@ -55,6 +55,8 @@ struct Engine {
     int width = 0;
     int height = 0;
     std::atomic<bool> recording{false};
+    std::atomic<bool> hasWindowFocus{false};
+    std::atomic<bool> audioDisconnected{false};
     std::string status = "NATIVE C++ CORE READY";
     AAudioStream* audioStream = nullptr;
     std::atomic<int> inputPeak{0};
@@ -378,6 +380,13 @@ void request_contacts_permission(Engine& e) {
     env->DeleteLocalRef(permissions);
     env->DeleteLocalRef(stringClass);
     env->DeleteLocalRef(cls);
+}
+
+void audio_error_callback(AAudioStream*, void* userData, aaudio_result_t error) {
+    auto* e = static_cast<Engine*>(userData);
+    if (!e) return;
+    LOGE("AAudio stream error: %s", AAudio_convertResultToText(error));
+    e->audioDisconnected.store(true, std::memory_order_release);
 }
 
 aaudio_data_callback_result_t audio_callback(AAudioStream*, void* userData,
@@ -1131,6 +1140,10 @@ void start_transcription(Engine& e) {
 
 void start_audio(Engine& e) {
     if (e.audioStream || e.recording.load()) return;
+    if (!e.hasWindowFocus.load()) {
+        set_status(e, "MICROPHONE PAUSED - JARVIS IS NOT IN FOREGROUND");
+        return;
+    }
     if (!has_audio_permission(e)) {
         e.micPermissionPending.store(true);
         request_audio_permission(e);
@@ -1170,6 +1183,7 @@ void start_audio(Engine& e) {
     AAudioStreamBuilder_setChannelCount(builder, 1);
     AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_I16);
     AAudioStreamBuilder_setDataCallback(builder, audio_callback, &e);
+    AAudioStreamBuilder_setErrorCallback(builder, audio_error_callback, &e);
 
     const aaudio_result_t openResult = AAudioStreamBuilder_openStream(builder, &e.audioStream);
     AAudioStreamBuilder_delete(builder);
@@ -1658,6 +1672,7 @@ void handle_cmd(android_app* app, int32_t cmd) {
             shutdown_gl(*e);
             break;
         case APP_CMD_GAINED_FOCUS:
+            e->hasWindowFocus.store(true);
             e->autoWakePending.store(true);
             if (e->display != EGL_NO_DISPLAY) draw_ui(*e);
             break;
@@ -1665,6 +1680,9 @@ void handle_cmd(android_app* app, int32_t cmd) {
             if (e->display != EGL_NO_DISPLAY) draw_ui(*e);
             break;
         case APP_CMD_LOST_FOCUS:
+            e->hasWindowFocus.store(false);
+            e->autoWakePending.store(false);
+            e->restartWake.store(false);
             if (e->recording.load()) {
                 stop_audio(*e);
                 set_status(*e, "WAKE LISTENER PAUSED - APP NOT IN FOREGROUND");
@@ -1705,17 +1723,24 @@ void android_main(android_app* app) {
                 return;
             }
         } while (ident >= 0);
+        if (engine.audioDisconnected.exchange(false)) {
+            stop_audio(engine);
+            set_status(engine, "AUDIO ROUTE DISCONNECTED - RESTARTING LISTENER");
+            if (engine.hasWindowFocus.load()) engine.autoWakePending.store(true);
+        }
+
         if (engine.kwsFailed.exchange(false)) {
             stop_audio(engine);
         }
 
-        if (engine.autoWakePending.exchange(false) && !engine.recording.load() &&
+        if (engine.autoWakePending.exchange(false) && engine.hasWindowFocus.load() &&
+            !engine.recording.load() &&
             !engine.processing.load() && !engine.speaking.load() && !engine.modelDownloading.load()) {
             start_audio(engine);
         }
 
-        if (engine.micPermissionPending.load() && has_audio_permission(engine) &&
-            !engine.recording.load() && !engine.processing.load()) {
+        if (engine.micPermissionPending.load() && engine.hasWindowFocus.load() &&
+            has_audio_permission(engine) && !engine.recording.load() && !engine.processing.load()) {
             engine.micPermissionPending.store(false);
             start_audio(engine);
         }
@@ -1743,8 +1768,8 @@ void android_main(android_app* app) {
             execute_command(engine, static_cast<jarvis::Command>(completedCommand), contact, message, youtube);
         }
 
-        if (engine.restartWake.exchange(false) && !engine.processing.load() &&
-            !engine.llmProcessing.load() && !engine.speaking.load() &&
+        if (engine.restartWake.exchange(false) && engine.hasWindowFocus.load() &&
+            !engine.processing.load() && !engine.llmProcessing.load() && !engine.speaking.load() &&
             !engine.recording.load() && !engine.shuttingDown.load() &&
             !app->destroyRequested) {
             start_audio(engine);
