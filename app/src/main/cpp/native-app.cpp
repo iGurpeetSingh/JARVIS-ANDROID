@@ -79,6 +79,10 @@ struct Engine {
     std::mutex statusMutex;
     std::atomic<int> pendingCommand{0};
     std::string pendingContact;
+    std::string pendingContactMessage;
+    std::string pendingRecipientName;
+    std::string pendingRecipientPhone;
+    std::atomic<bool> awaitingMessageConfirmation{false};
     std::string pendingYoutubeQuery;
     std::atomic<bool> processing{false};
     std::atomic<bool> wakeListening{false};
@@ -961,11 +965,20 @@ void start_transcription(Engine& e) {
         LOGI("Offline ASR transcript: %s", result.text.c_str());
 
         const std::string contactQuery = jarvis::extract_contact_query(result.text);
+        const std::string contactMessage = jarvis::extract_contact_message(result.text);
         const std::string youtubeQuery = jarvis::extract_youtube_query(result.text);
-        const jarvis::Command command = !contactQuery.empty()
+        jarvis::Command command = !contactQuery.empty()
             ? jarvis::Command::OpenWhatsAppContact
             : (!youtubeQuery.empty() ? jarvis::Command::SearchYouTube : jarvis::classify_command(result.text));
+        if (e.awaitingMessageConfirmation.load()) {
+            if (command != jarvis::Command::ConfirmPendingAction && command != jarvis::Command::CancelPendingAction) {
+                set_status(e, "PLEASE CONFIRM OR CANCEL THE WHATSAPP MESSAGE");
+                speak_hindi_async(e, "कृपया हाँ या नहीं बोलकर पुष्टि करें।");
+                command = jarvis::Command::Unknown;
+            }
+        }
         if (!contactQuery.empty()) e.pendingContact = contactQuery;
+        if (!contactMessage.empty()) e.pendingContactMessage = contactMessage;
         if (!youtubeQuery.empty()) e.pendingYoutubeQuery = youtubeQuery;
         if (command == jarvis::Command::Unknown) {
             if (!result.text.empty()) {
@@ -1150,11 +1163,14 @@ std::string lower_contact_name(std::string value) {
     return value;
 }
 
-bool launch_whatsapp_chat(Engine& e, const std::string& phone) {
+std::string encode_url_query(const std::string& value);
+
+bool launch_whatsapp_chat(Engine& e, const std::string& phone, const std::string& message) {
     JNIEnv* env = e.app->activity->env;
     jclass uriClass = env->FindClass("android/net/Uri");
     jmethodID parse = env->GetStaticMethodID(uriClass, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
-    const std::string url = "https://wa.me/" + phone + "?text=Hi";
+    std::string url = "https://wa.me/" + phone;
+    if (!message.empty()) url += "?text=" + encode_url_query(message);
     jstring urlValue = env->NewStringUTF(url.c_str());
     jobject uri = env->CallStaticObjectMethod(uriClass, parse, urlValue);
     clear_jni_exception(env);
@@ -1181,7 +1197,7 @@ bool launch_whatsapp_chat(Engine& e, const std::string& phone) {
     return success;
 }
 
-void open_whatsapp_contact(Engine& e, const std::string& query) {
+void open_whatsapp_contact(Engine& e, const std::string& query, const std::string& message) {
     if (query.empty()) {
         set_status(e, "CONTACT NAME NOT RECOGNIZED");
         speak_hindi_async(e, "कृपया संपर्क का नाम बताइए।");
@@ -1242,7 +1258,7 @@ void open_whatsapp_contact(Engine& e, const std::string& query) {
             if (name.empty() || number.empty()) continue;
             const std::string candidate = lower_contact_name(name);
             if (candidate == needle) exact.push_back({name, number});
-            else if (candidate.find(needle) != std::string::npos || needle.find(candidate) != std::string::npos) partial.push_back({name, number});
+            else if (candidate.find(needle) != std::string::npos) partial.push_back({name, number});
         }
         env->CallVoidMethod(cursor, close);
         env->DeleteLocalRef(cursorClass);
@@ -1290,15 +1306,56 @@ void open_whatsapp_contact(Engine& e, const std::string& query) {
         speak_hindi_async(e, "इस संपर्क का फोन नंबर सही नहीं है।");
         return;
     }
-    if (launch_whatsapp_chat(e, phone)) {
-        set_status(e, "WHATSAPP CHAT OPENED - HI PREFILLED");
-        speak_hindi_async(e, matches.front().name + " की व्हाट्सऐप चैट खुल गई है। संदेश भेजने के लिए भेजें दबाएँ।");
+    if (!message.empty()) {
+        e.pendingRecipientName = matches.front().name;
+        e.pendingRecipientPhone = phone;
+        e.pendingContactMessage = message;
+        e.awaitingMessageConfirmation.store(true);
+        set_status(e, "CONFIRM WHATSAPP MESSAGE BEFORE OPENING CHAT");
+        speak_hindi_async(e, "क्या मैं " + matches.front().name + " को यह संदेश भेजने के लिए व्हाट्सऐप खोल दूँ? संदेश है: " + message + "। हाँ या नहीं बोलिए।");
+        return;
+    }
+
+    if (launch_whatsapp_chat(e, phone, {})) {
+        set_status(e, "WHATSAPP CHAT OPENED");
+        speak_hindi_async(e, matches.front().name + " की व्हाट्सऐप चैट खुल गई है।");
     } else {
         set_status(e, "WHATSAPP CHAT COULD NOT OPEN");
         speak_hindi_async(e, "व्हाट्सऐप चैट नहीं खुल सकी।");
     }
 }
 
+void confirm_pending_whatsapp_message(Engine& e) {
+    if (!e.awaitingMessageConfirmation.exchange(false)) {
+        set_status(e, "NO WHATSAPP MESSAGE IS WAITING FOR CONFIRMATION");
+        return;
+    }
+    const std::string name = e.pendingRecipientName;
+    const std::string phone = e.pendingRecipientPhone;
+    const std::string message = e.pendingContactMessage;
+    e.pendingRecipientName.clear();
+    e.pendingRecipientPhone.clear();
+    e.pendingContactMessage.clear();
+    if (launch_whatsapp_chat(e, phone, message)) {
+        set_status(e, "WHATSAPP MESSAGE READY - USER MUST TAP SEND");
+        speak_hindi_async(e, "" + name + " की चैट खुल गई है। संदेश तैयार है। भेजने के लिए आपको खुद सेंड दबाना होगा।");
+    } else {
+        set_status(e, "WHATSAPP CHAT COULD NOT OPEN");
+        speak_hindi_async(e, "व्हाट्सऐप चैट नहीं खुल सकी।");
+    }
+}
+
+void cancel_pending_whatsapp_message(Engine& e) {
+    if (!e.awaitingMessageConfirmation.exchange(false)) {
+        set_status(e, "NO WHATSAPP MESSAGE IS WAITING FOR CONFIRMATION");
+        return;
+    }
+    e.pendingRecipientName.clear();
+    e.pendingRecipientPhone.clear();
+    e.pendingContactMessage.clear();
+    set_status(e, "WHATSAPP MESSAGE CANCELLED");
+    speak_hindi_async(e, "ठीक है, संदेश रद्द कर दिया है।");
+}
 std::string encode_url_query(const std::string& value) {
     static const char* hex = "0123456789ABCDEF";
     std::string encoded;
@@ -1350,10 +1407,16 @@ bool open_external_url(Engine& e, const std::string& url, const char* packageNam
     return success;
 }
 
-void execute_command(Engine& e, jarvis::Command command, const std::string& contactQuery = {}, const std::string& youtubeQuery = {}) {
+void execute_command(Engine& e, jarvis::Command command, const std::string& contactQuery = {}, const std::string& contactMessage = {}, const std::string& youtubeQuery = {}) {
     switch (command) {
         case jarvis::Command::OpenWhatsAppContact:
-            open_whatsapp_contact(e, contactQuery);
+            open_whatsapp_contact(e, contactQuery, contactMessage);
+            break;
+        case jarvis::Command::ConfirmPendingAction:
+            confirm_pending_whatsapp_message(e);
+            break;
+        case jarvis::Command::CancelPendingAction:
+            cancel_pending_whatsapp_message(e);
             break;
         case jarvis::Command::OpenWhatsApp:
             launch_package(e, "com.whatsapp");
@@ -1530,10 +1593,12 @@ void android_main(android_app* app) {
         const int completedCommand = engine.pendingCommand.exchange(0);
         if (completedCommand > 0) {
             const std::string contact = std::move(engine.pendingContact);
+            const std::string message = std::move(engine.pendingContactMessage);
             const std::string youtube = std::move(engine.pendingYoutubeQuery);
             engine.pendingContact.clear();
+            engine.pendingContactMessage.clear();
             engine.pendingYoutubeQuery.clear();
-            execute_command(engine, static_cast<jarvis::Command>(completedCommand), contact, youtube);
+            execute_command(engine, static_cast<jarvis::Command>(completedCommand), contact, message, youtube);
         }
 
         if (engine.restartWake.exchange(false) && !engine.processing.load() &&
