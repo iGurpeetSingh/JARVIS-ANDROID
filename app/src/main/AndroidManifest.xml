@@ -27,7 +27,7 @@
             android:name=".JarvisVoiceService"
             android:exported="false"
             android:foregroundServiceType="microphone"
-            android:stopWithTask="false" />
+            android:stopWithTask="true" />
 
         <activity
             android:name="android.app.NativeActivity"
