@@ -3,6 +3,8 @@
 #include <llama.h>
 
 #include <algorithm>
+#include <deque>
+#include <utility>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -12,6 +14,7 @@ std::mutex g_llmMutex;
 llama_model* g_model = nullptr;
 llama_context* g_context = nullptr;
 const llama_vocab* g_vocab = nullptr;
+std::deque<std::pair<std::string, std::string>> g_history;
 
 bool load_model_locked(const std::string& modelPath, std::string* error) {
     if (g_model && g_context && g_vocab) return true;
@@ -68,14 +71,18 @@ std::string offline_llm_generate(const std::string& modelPath,
     std::string safeQuestion = userText;
     if (safeQuestion.size() > 1200) safeQuestion.resize(1200);
 
-    const std::string prompt =
+    std::string prompt =
         "<|im_start|>system\n"
         "You are JARVIS, a concise helpful personal assistant. Do not reveal internal reasoning. "
         "Answer in natural Hindi. Understand Hindi and Hinglish. "
         "Do not claim you performed actions unless the app confirms them. "
-        "Keep spoken answers short and practical.<|im_end|>\n"
-        "<|im_start|>user\n" + safeQuestion + "<|im_end|>\n"
-        "<|im_start|>assistant\n";
+        "Keep spoken answers short and practical.<|im_end|>\n";
+    for (const auto& turn : g_history) {
+        prompt += "<|im_start|>user\n" + turn.first + "<|im_end|>\n";
+        prompt += "<|im_start|>assistant\n" + turn.second + "<|im_end|>\n";
+    }
+    prompt += "<|im_start|>user\n" + safeQuestion + "<|im_end|>\n";
+    prompt += "<|im_start|>assistant\n";
 
     const int32_t required = llama_tokenize(
         g_vocab, prompt.c_str(), static_cast<int32_t>(prompt.size()),
@@ -162,6 +169,10 @@ std::string offline_llm_generate(const std::string& modelPath,
     if (begin == std::string::npos) return {};
     const size_t end = response.find_last_not_of(" \t\r\n");
     response = response.substr(begin, end - begin + 1);
+
+    g_history.emplace_back(safeQuestion, response);
+    while (g_history.size() > 4) g_history.pop_front();
+
     return response;
 }
 
@@ -172,6 +183,7 @@ void offline_llm_shutdown() {
     g_context = nullptr;
     g_model = nullptr;
     g_vocab = nullptr;
+    g_history.clear();
 }
 
 }
