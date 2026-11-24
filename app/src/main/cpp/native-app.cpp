@@ -546,6 +546,7 @@ void start_transcription(Engine& e) {
         if (!ready) {
             set_status(e, "ASR MODEL FILE SETUP FAILED");
             e.processing.store(false);
+            e.restartWake.store(true);
             return;
         }
 
@@ -566,6 +567,7 @@ void start_transcription(Engine& e) {
         if (!recognizer.Get()) {
             set_status(e, "OFFLINE ASR MODEL FAILED TO LOAD");
             e.processing.store(false);
+            e.restartWake.store(true);
             return;
         }
 
@@ -584,25 +586,42 @@ void start_transcription(Engine& e) {
             set_status(e, "VOICE COMMAND RECOGNIZED");
         }
         e.processing.store(false);
+        e.restartWake.store(true);
     });
 }
 
 void start_audio(Engine& e) {
+    if (e.audioStream || e.recording.load()) return;
     if (!has_audio_permission(e)) {
         request_audio_permission(e);
-        e.status = "ALLOW MIC PERMISSION THEN TAP AGAIN";
+        set_status(e, "ALLOW MIC PERMISSION THEN TAP AGAIN");
         return;
     }
+
+    if (e.asrThread.joinable()) e.asrThread.join();
 
     {
         std::lock_guard<std::mutex> lock(e.audioMutex);
         e.recordedSamples.clear();
-        e.recordedSamples.reserve(static_cast<size_t>(16000) * 60);
+        e.recordedSamples.reserve(static_cast<size_t>(16000) * 12);
     }
+    {
+        std::lock_guard<std::mutex> lock(e.kwsMutex);
+        e.kwsAudioQueue.clear();
+    }
+
+    e.wakeDetected.store(false);
+    e.wakeListening.store(true);
+    e.commandReady.store(false);
+    e.speechStarted.store(false);
+    e.silenceFrames.store(0);
+    e.commandFrames.store(0);
+    e.kwsFailed.store(false);
 
     AAudioStreamBuilder* builder = nullptr;
     if (AAudio_createStreamBuilder(&builder) != AAUDIO_OK) {
         set_status(e, "AUDIO INPUT UNAVAILABLE");
+        e.wakeListening.store(false);
         return;
     }
     AAudioStreamBuilder_setDirection(builder, AAUDIO_DIRECTION_INPUT);
@@ -616,6 +635,7 @@ void start_audio(Engine& e) {
     if (openResult != AAUDIO_OK || !e.audioStream) {
         set_status(e, "FAILED TO OPEN MICROPHONE");
         e.audioStream = nullptr;
+        e.wakeListening.store(false);
         return;
     }
 
@@ -627,9 +647,10 @@ void start_audio(Engine& e) {
         return;
     }
 
-    e.recording = true;
-    set_status(e, "RECORDING - TAP MIC TO TRANSCRIBE");
-    LOGI("Native AAudio input started");
+    e.recording.store(true);
+    e.kwsThread = std::thread(run_wake_word_engine, std::ref(e));
+    set_status(e, "LISTENING FOR JARVIS");
+    LOGI("Native AAudio wake-word listener started");
 }
 
 void launch_package(Engine& e, const char* packageName) {
@@ -730,10 +751,15 @@ int32_t handle_input(android_app* app, AInputEvent* event) {
             set_status(*e, "OFFLINE ASR IS PROCESSING");
             return 1;
         }
-        if (e->recording) {
+        if (e->recording.load()) {
+            const bool commandWasTriggered = e->wakeDetected.load();
             stop_audio(*e);
-            set_status(*e, "MICROPHONE STOPPED - STARTING OFFLINE ASR");
-            start_transcription(*e);
+            if (commandWasTriggered) {
+                set_status(*e, "MIC LISTENING STOPPED - TRANSCRIBING");
+                start_transcription(*e);
+            } else {
+                set_status(*e, "WAKE WORD LISTENING STOPPED");
+            }
         } else {
             start_audio(*e);
         }
@@ -800,10 +826,26 @@ void android_main(android_app* app) {
                 return;
             }
         } while (ident >= 0);
+        if (engine.kwsFailed.exchange(false)) {
+            stop_audio(engine);
+        }
+
+        if (engine.commandReady.exchange(false) && engine.recording.load()) {
+            stop_audio(engine);
+            set_status(engine, "COMMAND CAPTURED - TRANSCRIBING OFFLINE");
+            start_transcription(engine);
+        }
+
         const int completedCommand = engine.pendingCommand.exchange(0);
         if (completedCommand > 0) {
             execute_command(engine, static_cast<jarvis::Command>(completedCommand));
         }
+
+        if (engine.restartWake.exchange(false) && !engine.processing.load() &&
+            !engine.recording.load() && !app->destroyRequested) {
+            start_audio(engine);
+        }
+
         if (engine.display != EGL_NO_DISPLAY) draw_ui(engine);
     }
 }
