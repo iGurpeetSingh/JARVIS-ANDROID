@@ -1099,9 +1099,11 @@ void start_transcription(Engine& e) {
             : (!youtubeQuery.empty() ? jarvis::Command::SearchYouTube : jarvis::classify_command(result.text));
         bool blockedByConfirmation = false;
         if (e.awaitingMessageConfirmation.load()) {
-            if (command != jarvis::Command::ConfirmPendingAction && command != jarvis::Command::CancelPendingAction) {
+            command = jarvis::classify_confirmation(result.text);
+            if (command != jarvis::Command::ConfirmPendingAction &&
+                command != jarvis::Command::CancelPendingAction) {
                 set_status(e, "PLEASE CONFIRM OR CANCEL THE WHATSAPP MESSAGE");
-                speak_hindi_async(e, "कृपया हाँ या नहीं बोलकर पुष्टि करें।");
+                speak_hindi_async(e, "कृपया साफ़ तौर पर हाँ या नहीं बोलकर पुष्टि करें।");
                 blockedByConfirmation = true;
             }
         }
