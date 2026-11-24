@@ -63,7 +63,7 @@ jobs:
         run: |
           while IFS= read -r source; do
             case "$source" in
-              app/src/main/java/com/jarvis/assistant/JarvisVoiceService.java|app/src/main/java/com/jarvis/assistant/NativePermissionBridge.java)
+              app/src/main/java/com/jarvis/assistant/JarvisVoiceService.java|app/src/main/java/com/jarvis/assistant/NativePermissionBridge.java|app/src/main/java/com/jarvis/assistant/GuriNativeActivity.java)
                 ;;
               *)
                 echo "Unexpected Java/Kotlin app source: $source"
