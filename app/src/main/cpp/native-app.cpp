@@ -1363,7 +1363,8 @@ void start_audio(Engine& e) {
 }
 
 void launch_package(Engine& e, const char* packageName) {
-    if (e.edgeOverlayVisible) { set_edge_overlay(e, false); e.edgeOverlayVisible = false; }
+    // Keep the user-visible overlay alive while launching from background; Android 15
+    // can use it as the SYSTEM_ALERT_WINDOW background-activity-launch exemption.
     JNIEnv* env = current_jni_env(e);
     jobject activity = e.app->activity->clazz;
     jclass contextClass = env->GetObjectClass(activity);
@@ -1719,7 +1720,19 @@ bool open_external_url(Engine& e, const std::string& url, const char* packageNam
 }
 
 void execute_command(Engine& e, jarvis::Command command, const std::string& contactQuery = {}, const std::string& contactMessage = {}, const std::string& youtubeQuery = {}) {
-    if (e.edgeOverlayVisible) { set_edge_overlay(e, false); e.edgeOverlayVisible = false; }
+    const bool mayLaunchExternalActivity =
+        command == jarvis::Command::OpenWhatsAppContact ||
+        command == jarvis::Command::ConfirmPendingAction ||
+        command == jarvis::Command::OpenWhatsApp ||
+        command == jarvis::Command::OpenYouTube ||
+        command == jarvis::Command::OpenInstagram ||
+        command == jarvis::Command::OpenFacebook ||
+        command == jarvis::Command::SearchYouTube ||
+        command == jarvis::Command::OpenDialer;
+    if (e.edgeOverlayVisible && !mayLaunchExternalActivity) {
+        set_edge_overlay(e, false);
+        e.edgeOverlayVisible = false;
+    }
     switch (command) {
         case jarvis::Command::OpenWhatsAppContact:
             open_whatsapp_contact(e, contactQuery, contactMessage);
@@ -1850,6 +1863,11 @@ void handle_cmd(android_app* app, int32_t cmd) {
             break;
         case APP_CMD_LOST_FOCUS:
             e->hasWindowFocus.store(false);
+            // The target app has taken focus: remove the RGB border immediately.
+            if (e->edgeOverlayVisible) {
+                set_edge_overlay(*e, false);
+                e->edgeOverlayVisible = false;
+            }
             if (!gVoiceServiceRunning.load(std::memory_order_acquire)) {
                 e->autoWakePending.store(false);
                 e->restartWake.store(false);
