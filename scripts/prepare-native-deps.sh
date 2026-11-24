@@ -12,7 +12,7 @@ mkdir -p "$TMP_DIR" \
   "$ROOT/app/src/main/jniLibs/arm64-v8a" \
   "$ROOT/app/src/main/assets/sherpa-whisper-tiny"
 
-echo "[JARVIS] Downloading sherpa-onnx 2.0.3 native Android libraries"
+echo "[GURI] Downloading sherpa-onnx 2.0.3 native Android libraries"
 curl --fail --location --retry 3 "$SHERPA_URL" -o "$TMP_DIR/sherpa-android.tar.bz2"
 echo "$SHERPA_SHA256  $TMP_DIR/sherpa-android.tar.bz2" | sha256sum --check
 mkdir -p "$TMP_DIR/sherpa"
@@ -37,7 +37,7 @@ fi
 LIB_DIR="$(dirname "$LIB_FILE")"
 cp "$LIB_DIR"/*.so "$ROOT/app/src/main/jniLibs/arm64-v8a/"
 
-echo "[JARVIS] Downloading multilingual Whisper Tiny model (offline ASR)"
+echo "[GURI] Downloading multilingual Whisper Tiny model (offline ASR)"
 curl --fail --location --retry 3 "$MODEL_URL" -o "$TMP_DIR/whisper-tiny.tar.bz2"
 mkdir -p "$TMP_DIR/whisper-tiny"
 tar -xjf "$TMP_DIR/whisper-tiny.tar.bz2" -C "$TMP_DIR/whisper-tiny"
@@ -54,7 +54,7 @@ cp "$ENCODER" "$ROOT/app/src/main/assets/sherpa-whisper-tiny/encoder.int8.onnx"
 cp "$DECODER" "$ROOT/app/src/main/assets/sherpa-whisper-tiny/decoder.int8.onnx"
 cp "$TOKENS" "$ROOT/app/src/main/assets/sherpa-whisper-tiny/tokens.txt"
 
-echo "[JARVIS] Downloading streaming keyword-spotting model for the GURI wake phrase"
+echo "[GURI] Downloading streaming keyword-spotting model for the GURI wake phrase"
 KWS_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01-mobile.tar.bz2"
 curl --fail --location --retry 3 "$KWS_URL" -o "$TMP_DIR/jarvis-kws-mobile.tar.bz2"
 mkdir -p "$TMP_DIR/jarvis-kws"
@@ -78,7 +78,7 @@ cp "$KWS_JOINER" "$ROOT/app/src/main/assets/jarvis-kws/joiner.int8.onnx"
 cp "$KWS_TOKENS" "$ROOT/app/src/main/assets/jarvis-kws/tokens.txt"
 cp "$KWS_BPE" "$ROOT/app/src/main/assets/jarvis-kws/bpe.model"
 
-echo "[JARVIS] Creating BPE-tokenized open-vocabulary wake phrase"
+echo "[GURI] Creating BPE-tokenized open-vocabulary wake phrase"
 python3 -m pip install --disable-pip-version-check --quiet "sherpa-onnx==2.0.3" sentencepiece pypinyin
 python3 - "$ROOT/app/src/main/assets/jarvis-kws/tokens.txt" \
   "$ROOT/app/src/main/assets/jarvis-kws/bpe.model" \
@@ -95,7 +95,7 @@ with open(output_path, "w", encoding="utf-8") as output:
 print("Generated GURI wake phrases:", phrases)
 PY
 
-echo "[JARVIS] Downloading Hindi male Piper voice (Rohan, int8)"
+echo "[GURI] Downloading Hindi male Piper voice (Rohan, int8)"
 HINDI_TTS_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-hi_IN-rohan-medium-int8.tar.bz2"
 curl --fail --location --retry 3 "$HINDI_TTS_URL" -o "$TMP_DIR/hindi-tts.tar.bz2"
 mkdir -p "$TMP_DIR/hindi-tts"
@@ -114,7 +114,7 @@ cp "$HINDI_TTS_MODEL" "$ROOT/app/src/main/assets/jarvis-tts/model.onnx"
 cp "$HINDI_TTS_TOKENS" "$ROOT/app/src/main/assets/jarvis-tts/tokens.txt"
 cp "$HINDI_TTS_METADATA" "$ROOT/app/src/main/assets/jarvis-tts/model.onnx.json"
 
-echo "[JARVIS] Reusing bundled espeak-ng phoneme data from the Hindi voice archive"
+echo "[GURI] Reusing bundled espeak-ng phoneme data from the Hindi voice archive"
 ESPEAK_PHONTAB="$(find "$TMP_DIR/hindi-tts" -type f -path '*/espeak-ng-data/phontab' -print -quit)"
 if [[ -z "$ESPEAK_PHONTAB" ]]; then
   echo "Hindi voice archive does not contain its bundled espeak-ng-data/phontab."
@@ -124,6 +124,6 @@ fi
 ESPEAK_DATA_DIR="$(dirname "$ESPEAK_PHONTAB")"
 cp -R "$ESPEAK_DATA_DIR" "$ROOT/app/src/main/assets/espeak-ng-data"
 
-echo "[JARVIS] Native dependency preparation complete."
+echo "[GURI] Native dependency preparation complete."
 du -h "$ROOT/app/src/main/jniLibs/arm64-v8a/"*.so \
   "$ROOT/app/src/main/assets/sherpa-whisper-tiny/"* "$ROOT/app/src/main/assets/jarvis-kws/"* "$ROOT/app/src/main/assets/jarvis-tts/"*
