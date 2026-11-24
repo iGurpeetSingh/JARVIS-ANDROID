@@ -510,6 +510,9 @@ void set_edge_overlay(Engine& e, bool visible) {
 }
 
 void hide_edge_overlay(Engine& e) {
+    // Clear a not-yet-rendered request too, so a delayed service startup
+    // cannot display a stale border after the command has already finished.
+    e.edgeOverlayPending.store(false, std::memory_order_release);
     if (!e.edgeOverlayVisible) return;
     set_edge_overlay(e, false);
     e.edgeOverlayVisible = false;
@@ -1219,7 +1222,7 @@ void start_transcription(Engine& e) {
 
     if (samples.size() < 4000) {
         set_status(e, "TOO SHORT - SPEAK FOR 1 SECOND");
-        if (e.edgeOverlayVisible) { set_edge_overlay(e, false); e.edgeOverlayVisible = false; }
+        hide_edge_overlay(e);
         return;
     }
 
@@ -1319,7 +1322,7 @@ void start_transcription(Engine& e) {
 void start_audio(Engine& e) {
     try {
     if (e.audioStream || e.recording.load()) return;
-    if (e.edgeOverlayVisible) { set_edge_overlay(e, false); e.edgeOverlayVisible = false; }
+    hide_edge_overlay(e);
     if (!e.hasWindowFocus.load() && !gVoiceServiceRunning.load(std::memory_order_acquire)) {
         set_status(e, "MICROPHONE PAUSED - JARVIS IS NOT IN FOREGROUND");
         return;
@@ -1768,10 +1771,7 @@ void execute_command(Engine& e, jarvis::Command command, const std::string& cont
         command == jarvis::Command::OpenFacebook ||
         command == jarvis::Command::SearchYouTube ||
         command == jarvis::Command::OpenDialer;
-    if (e.edgeOverlayVisible && !mayLaunchExternalActivity) {
-        set_edge_overlay(e, false);
-        e.edgeOverlayVisible = false;
-    }
+    if (!mayLaunchExternalActivity) hide_edge_overlay(e);
     switch (command) {
         case jarvis::Command::OpenWhatsAppContact:
             open_whatsapp_contact(e, contactQuery, contactMessage);
@@ -1902,17 +1902,15 @@ void handle_cmd(android_app* app, int32_t cmd) {
             break;
         case APP_CMD_LOST_FOCUS:
             e->hasWindowFocus.store(false);
-            // The target app has taken focus: remove the RGB border immediately.
-            if (e->edgeOverlayVisible) {
-                set_edge_overlay(*e, false);
-                e->edgeOverlayVisible = false;
-            }
             if (!gVoiceServiceRunning.load(std::memory_order_acquire)) {
+                hide_edge_overlay(*e);
                 e->autoWakePending.store(false);
                 e->restartWake.store(false);
                 if (e->recording.load()) stop_audio(*e);
                 set_status(*e, "VOICE LISTENER PAUSED - BACKGROUND SERVICE NOT ACTIVE");
             } else {
+                // Keep the touch-through RGB overlay above the foreground app
+                // while the background voice service is capturing a command.
                 set_status(*e, "BACKGROUND OFFLINE VOICE LISTENER ACTIVE");
             }
             break;
@@ -1980,12 +1978,16 @@ void android_main(android_app* app) {
             engine.autoWakePending.store(true);
         } else if (!voiceServiceRunning && engine.lastVoiceServiceRunning) {
             if (engine.recording.load()) stop_audio(engine);
-            if (engine.edgeOverlayVisible) { set_edge_overlay(engine, false); engine.edgeOverlayVisible = false; }
+            hide_edge_overlay(engine);
             engine.voiceServiceStartRequested = false;
         }
         engine.lastVoiceServiceRunning = voiceServiceRunning;
 
-        if (engine.edgeOverlayPending.exchange(false) && voiceServiceRunning && !engine.edgeOverlayVisible) {
+        // Do not consume the request until the service instance is ready.
+        // Previously exchange(false) ran even while the service was still starting,
+        // permanently dropping the first wake-word light request.
+        if (voiceServiceRunning && !engine.edgeOverlayVisible &&
+            engine.edgeOverlayPending.exchange(false, std::memory_order_acq_rel)) {
             set_edge_overlay(engine, true);
             engine.edgeOverlayVisible = true;
         }
@@ -2015,7 +2017,7 @@ void android_main(android_app* app) {
         }
 
         if (engine.pendingLlmQuery.exchange(false)) {
-            if (engine.edgeOverlayVisible) { set_edge_overlay(engine, false); engine.edgeOverlayVisible = false; }
+            hide_edge_overlay(engine);
             const std::string question = engine.pendingQuestion;
             engine.pendingQuestion.clear();
             start_offline_llm_reply(engine, question);
