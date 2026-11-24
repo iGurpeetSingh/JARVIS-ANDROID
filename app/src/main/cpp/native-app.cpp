@@ -67,6 +67,7 @@ struct Engine {
     std::atomic<bool> speaking{false};
     std::mutex statusMutex;
     std::atomic<int> pendingCommand{0};
+    std::string pendingContact;
     std::atomic<bool> processing{false};
     std::atomic<bool> wakeListening{false};
     std::atomic<bool> wakeDetected{false};
@@ -747,7 +748,11 @@ void start_transcription(Engine& e) {
         const auto result = recognizer.GetResult(&stream);
         LOGI("Offline ASR transcript: %s", result.text.c_str());
 
-        const jarvis::Command command = jarvis::classify_command(result.text);
+        const std::string contactQuery = jarvis::extract_contact_query(result.text);
+        const jarvis::Command command = contactQuery.empty()
+            ? jarvis::classify_command(result.text)
+            : jarvis::Command::OpenWhatsAppContact;
+        if (!contactQuery.empty()) e.pendingContact = contactQuery;
         if (command == jarvis::Command::Unknown) {
             set_status(e, result.text.empty() ? "NO SPEECH RECOGNIZED" : "SPEECH HEARD - NO COMMAND MATCH");
         } else {
@@ -1036,7 +1041,9 @@ void android_main(android_app* app) {
 
         const int completedCommand = engine.pendingCommand.exchange(0);
         if (completedCommand > 0) {
-            execute_command(engine, static_cast<jarvis::Command>(completedCommand));
+            const std::string contact = std::move(engine.pendingContact);
+            engine.pendingContact.clear();
+            execute_command(engine, static_cast<jarvis::Command>(completedCommand), contact);
         }
 
         if (engine.restartWake.exchange(false) && !engine.processing.load() &&
