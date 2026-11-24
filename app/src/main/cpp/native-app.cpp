@@ -74,6 +74,7 @@ struct Engine {
     std::atomic<bool> speaking{false};
     std::atomic<bool> llmProcessing{false};
     std::atomic<bool> shuttingDown{false};
+    std::atomic<bool> memoryPressure{false};
     std::mutex ttsMutex;
     std::atomic<bool> modelDownloading{false};
     std::atomic<bool> localModelReady{false};
@@ -312,8 +313,12 @@ void draw_ui(Engine& e) {
     draw_text(e, "WHATSAPP", margin+buttonW*0.23f, buttonY+buttonH*0.38f, labelScale, 0.55f,0.90f,1.0f);
     draw_text(e, "YOUTUBE", margin+buttonW+gap+buttonW*0.27f, buttonY+buttonH*0.38f, labelScale, 0.55f,0.90f,1.0f);
 
+    const std::string privacy = "AUDIO RUNS LOCALLY - WHATSAPP SEND IS MANUAL";
+    const float privacyScale = std::max(1.0f, std::min(1.5f, e.width/720.0f));
+    draw_text(e, privacy, (e.width-privacy.size()*4.0f*privacyScale)/2.0f,
+              e.height*0.91f, privacyScale, 0.48f,0.68f,0.78f);
     const std::string footer = "TAP HERE TO INSTALL OFFLINE AI";
-    draw_text(e, footer, (e.width-footer.size()*4.0f*2.0f)/2.0f, e.height*0.95f, 2.0f,0.30f,0.48f,0.60f);
+    draw_text(e, footer, (e.width-footer.size()*4.0f*2.0f)/2.0f, e.height*0.96f, 2.0f,0.30f,0.48f,0.60f);
     eglSwapBuffers(e.display, e.surface);
 }
 
@@ -1679,6 +1684,10 @@ void handle_cmd(android_app* app, int32_t cmd) {
         case APP_CMD_WINDOW_RESIZED:
             if (e->display != EGL_NO_DISPLAY) draw_ui(*e);
             break;
+        case APP_CMD_LOW_MEMORY:
+            e->memoryPressure.store(true, std::memory_order_release);
+            LOGE("Android reported low memory; native model resources will be trimmed when idle");
+            break;
         case APP_CMD_LOST_FOCUS:
             e->hasWindowFocus.store(false);
             e->autoWakePending.store(false);
@@ -1723,6 +1732,18 @@ void android_main(android_app* app) {
                 return;
             }
         } while (ident >= 0);
+        if (engine.memoryPressure.exchange(false)) {
+            if (!engine.speaking.load()) {
+                if (engine.ttsThread.joinable()) engine.ttsThread.join();
+                engine.hindiTts.reset();
+            }
+            if (!engine.llmProcessing.load()) {
+                if (engine.llmThread.joinable()) engine.llmThread.join();
+                jarvis::offline_llm_shutdown();
+            }
+            set_status(engine, "LOW MEMORY - IDLE AI MODELS RELEASED");
+        }
+
         if (engine.audioDisconnected.exchange(false)) {
             stop_audio(engine);
             set_status(engine, "AUDIO ROUTE DISCONNECTED - RESTARTING LISTENER");
