@@ -9,6 +9,7 @@
 #include <jni.h>
 #include "command_engine.h"
 #include "sherpa-onnx/c-api/cxx-api.h"
+#include "piper-phonemize/cxx-api.h"
 
 #include <algorithm>
 #include <array>
@@ -19,6 +20,7 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <memory>
 #include <condition_variable>
 #include <deque>
 #include <thread>
@@ -58,6 +60,9 @@ struct Engine {
     std::deque<float> kwsAudioQueue;
     std::thread kwsThread;
     std::thread asrThread;
+    std::thread ttsThread;
+    std::unique_ptr<sherpa_onnx::cxx::OfflineTts> hindiTts;
+    std::atomic<bool> speaking{false};
     std::mutex statusMutex;
     std::atomic<int> pendingCommand{0};
     std::atomic<bool> processing{false};
@@ -504,6 +509,162 @@ void run_wake_word_engine(Engine& e) {
     }
 }
 
+void play_generated_audio(const sherpa_onnx::cxx::GeneratedAudio& generated) {
+    if (generated.samples.empty() || generated.sample_rate <= 0) return;
+
+    AAudioStreamBuilder* builder = nullptr;
+    if (AAudio_createStreamBuilder(&builder) != AAUDIO_OK || !builder) return;
+    AAudioStreamBuilder_setDirection(builder, AAUDIO_DIRECTION_OUTPUT);
+    AAudioStreamBuilder_setChannelCount(builder, 1);
+    AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_I16);
+    AAudioStreamBuilder_setSampleRate(builder, AAUDIO_UNSPECIFIED);
+    AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+    AAudioStreamBuilder_setUsage(builder, AAUDIO_USAGE_MEDIA);
+
+    AAudioStream* output = nullptr;
+    const aaudio_result_t opened = AAudioStreamBuilder_openStream(builder, &output);
+    AAudioStreamBuilder_delete(builder);
+    if (opened != AAUDIO_OK || !output) {
+        LOGE("Hindi speech output stream could not be opened: %s", AAudio_convertResultToText(opened));
+        return;
+    }
+
+    const int32_t targetRate = AAudioStream_getSampleRate(output);
+    if (targetRate <= 0 || AAudioStream_requestStart(output) != AAUDIO_OK) {
+        AAudioStream_close(output);
+        return;
+    }
+
+    const double ratio = static_cast<double>(generated.sample_rate) / targetRate;
+    const size_t outputCount = static_cast<size_t>(
+        std::ceil(generated.samples.size() / ratio));
+    std::vector<int16_t> pcm(outputCount);
+    for (size_t i = 0; i < outputCount; ++i) {
+        const double sourcePosition = i * ratio;
+        const size_t left = std::min(static_cast<size_t>(sourcePosition),
+                                     generated.samples.size() - 1);
+        const size_t right = std::min(left + 1, generated.samples.size() - 1);
+        const float fraction = static_cast<float>(sourcePosition - left);
+        const float sample = generated.samples[left] * (1.0f - fraction) +
+                             generated.samples[right] * fraction;
+        const float clipped = std::max(-1.0f, std::min(1.0f, sample));
+        pcm[i] = static_cast<int16_t>(clipped * 32767.0f);
+    }
+
+    size_t offset = 0;
+    while (offset < pcm.size()) {
+        const int32_t frames = static_cast<int32_t>(
+            std::min<size_t>(2048, pcm.size() - offset));
+        const aaudio_result_t written = AAudioStream_write(
+            output, pcm.data() + offset, frames, 1000000000LL);
+        if (written < 0) {
+            LOGE("Hindi speech output failed: %s", AAudio_convertResultToText(written));
+            break;
+        }
+        offset += static_cast<size_t>(written);
+    }
+
+    AAudioStream_requestStop(output);
+    AAudioStream_close(output);
+}
+
+void speak_hindi_async(Engine& e, const std::string& text) {
+    if (text.empty() || e.speaking.load()) return;
+    if (e.ttsThread.joinable()) e.ttsThread.join();
+
+    e.speaking.store(true);
+    e.ttsThread = std::thread([&e, text] {
+        const std::string baseDir = e.app->activity->internalDataPath;
+        const std::string modelDir = baseDir + "/jarvis-hindi-voice";
+        const std::string espeakDir = baseDir + "/espeak-ng-data";
+        mkdir(modelDir.c_str(), 0700);
+
+        const std::string modelPath = modelDir + "/model.int8.onnx";
+        const std::string tokensPath = modelDir + "/tokens.txt";
+        const std::string espeakPhontab = espeakDir + "/phontab";
+        const bool ready =
+            copy_asset_to_file(e.app->activity->assetManager,
+                               "jarvis-tts/model.int8.onnx", modelPath) &&
+            copy_asset_to_file(e.app->activity->assetManager,
+                               "jarvis-tts/tokens.txt", tokensPath) &&
+            copy_asset_to_file(e.app->activity->assetManager,
+                               "espeak-ng-data/phontab",
+                               espeakPhontab);
+
+        if (!ready) {
+            set_status(e, "HINDI VOICE ASSETS NOT READY");
+            e.speaking.store(false);
+            return;
+        }
+
+        // espeak-ng uses a complete data directory; copy remaining phoneme
+        // tables and dictionaries once into the app-private folder.
+        AAssetDir* assetDir = AAssetManager_openDir(
+            e.app->activity->assetManager, "espeak-ng-data");
+        if (assetDir) {
+            const char* name = nullptr;
+            while ((name = AAssetDir_getNextFileName(assetDir)) != nullptr) {
+                const std::string assetName = std::string("espeak-ng-data/") + name;
+                const std::string outputPath = espeakDir + "/" + name;
+                copy_asset_to_file(e.app->activity->assetManager,
+                                   assetName.c_str(), outputPath);
+            }
+            AAssetDir_close(assetDir);
+        }
+
+        if (piper_phonemize::cxx::Initialize(espeakDir) < 0) {
+            set_status(e, "HINDI PHONEMIZER INITIALIZATION FAILED");
+            e.speaking.store(false);
+            return;
+        }
+
+        if (!e.hindiTts || !e.hindiTts->Get()) {
+            set_status(e, "LOADING HINDI VOICE MODEL");
+            sherpa_onnx::cxx::OfflineTtsConfig config;
+            config.model.vits.model = modelPath;
+            config.model.vits.tokens = tokensPath;
+            config.model.vits.noise_scale = 0.667f;
+            config.model.vits.noise_scale_w = 0.8f;
+            config.model.vits.length_scale = 1.0f;
+            config.model.num_threads = 2;
+            config.model.provider = "cpu";
+            config.model.debug = false;
+
+            auto model = sherpa_onnx::cxx::OfflineTts::Create(config);
+            if (!model.Get()) {
+                set_status(e, "HINDI VOICE MODEL FAILED TO LOAD");
+                e.speaking.store(false);
+                return;
+            }
+            e.hindiTts = std::make_unique<sherpa_onnx::cxx::OfflineTts>(std::move(model));
+        }
+
+        const std::string voice = e.hindiTts->Lang().empty() ? "hi" : e.hindiTts->Lang();
+        const auto phonemes = piper_phonemize::cxx::Phonemize(text, voice);
+        if (phonemes.sentences.empty()) {
+            set_status(e, "HINDI TEXT PHONEMIZATION FAILED");
+            e.speaking.store(false);
+            return;
+        }
+
+        sherpa_onnx::cxx::GenerationConfig generation;
+        generation.sid = 0;
+        generation.speed = 1.0f;
+        generation.phoneme_codepoints = phonemes.sentences;
+
+        set_status(e, "SPEAKING HINDI RESPONSE");
+        const auto audio = e.hindiTts->Generate("", generation);
+        if (audio.samples.empty()) {
+            set_status(e, "HINDI SPEECH GENERATION FAILED");
+        } else {
+            play_generated_audio(audio);
+        }
+
+        e.speaking.store(false);
+        e.restartWake.store(true);
+    });
+}
+
 void start_transcription(Engine& e) {
     if (e.processing.load()) {
         set_status(e, "ASR IS STILL PROCESSING");
@@ -712,25 +873,49 @@ void change_volume(Engine& e, bool up) {
     env->DeleteLocalRef(cls);
 }
 
+void launch_dialer(Engine& e) {
+    JNIEnv* env = e.app->activity->env;
+    jclass intentClass = env->FindClass("android/content/Intent");
+    jmethodID constructor = env->GetMethodID(intentClass, "<init>", "(Ljava/lang/String;)V");
+    jstring action = env->NewStringUTF("android.intent.action.DIAL");
+    jobject intent = env->NewObject(intentClass, constructor, action);
+    jclass activityClass = env->GetObjectClass(e.app->activity->clazz);
+    jmethodID startActivity = env->GetMethodID(
+        activityClass, "startActivity", "(Landroid/content/Intent;)V");
+    env->CallVoidMethod(e.app->activity->clazz, startActivity, intent);
+    clear_jni_exception(env);
+    env->DeleteLocalRef(activityClass);
+    env->DeleteLocalRef(intent);
+    env->DeleteLocalRef(action);
+    env->DeleteLocalRef(intentClass);
+}
+
 void execute_command(Engine& e, jarvis::Command command) {
     switch (command) {
         case jarvis::Command::OpenWhatsApp:
             launch_package(e, "com.whatsapp");
+            speak_hindi_async(e, "व्हाट्सऐप खोल रहा हूँ।");
             break;
         case jarvis::Command::OpenYouTube:
             launch_package(e, "com.google.android.youtube");
+            speak_hindi_async(e, "यूट्यूब खोल रहा हूँ।");
             break;
         case jarvis::Command::VolumeUp:
             change_volume(e, true);
+            speak_hindi_async(e, "आवाज़ बढ़ा दी है।");
             break;
         case jarvis::Command::VolumeDown:
             change_volume(e, false);
+            speak_hindi_async(e, "आवाज़ कम कर दी है।");
             break;
         case jarvis::Command::OpenDialer:
-            set_status(e, "DIALER VOICE ACTION NOT YET CONNECTED");
+            launch_dialer(e);
+            set_status(e, "DIALER OPENED - CALL NOT PLACED");
+            speak_hindi_async(e, "फोन डायलर खोल दिया है। कॉल करने से पहले नंबर जाँच लें।");
             break;
         default:
             set_status(e, "COMMAND NOT RECOGNIZED");
+            speak_hindi_async(e, "माफ़ कीजिए, मैं आपका आदेश समझ नहीं पाया।");
             break;
     }
 }
@@ -822,6 +1007,7 @@ void android_main(android_app* app) {
             if (app->destroyRequested) {
                 stop_audio(engine);
                 if (engine.asrThread.joinable()) engine.asrThread.join();
+                if (engine.ttsThread.joinable()) engine.ttsThread.join();
                 shutdown_gl(engine);
                 return;
             }
@@ -842,7 +1028,7 @@ void android_main(android_app* app) {
         }
 
         if (engine.restartWake.exchange(false) && !engine.processing.load() &&
-            !engine.recording.load() && !app->destroyRequested) {
+            !engine.speaking.load() && !engine.recording.load() && !app->destroyRequested) {
             start_audio(engine);
         }
 
