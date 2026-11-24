@@ -1254,7 +1254,58 @@ void open_whatsapp_contact(Engine& e, const std::string& query) {
     }
 }
 
-void execute_command(Engine& e, jarvis::Command command, const std::string& contactQuery = {}) {
+std::string encode_url_query(const std::string& value) {
+    static const char* hex = "0123456789ABCDEF";
+    std::string encoded;
+    for (unsigned char ch : value) {
+        const bool safe = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                          (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' ||
+                          ch == '.' || ch == '~';
+        if (safe) encoded.push_back(static_cast<char>(ch));
+        else if (ch == ' ') encoded.push_back('+');
+        else {
+            encoded.push_back('%');
+            encoded.push_back(hex[(ch >> 4) & 0x0F]);
+            encoded.push_back(hex[ch & 0x0F]);
+        }
+    }
+    return encoded;
+}
+
+bool open_external_url(Engine& e, const std::string& url, const char* packageName = nullptr) {
+    JNIEnv* env = e.app->activity->env;
+    jclass uriClass = env->FindClass("android/net/Uri");
+    jmethodID parse = env->GetStaticMethodID(uriClass, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
+    jstring urlText = env->NewStringUTF(url.c_str());
+    jobject uri = env->CallStaticObjectMethod(uriClass, parse, urlText);
+    jclass intentClass = env->FindClass("android/content/Intent");
+    jmethodID constructor = env->GetMethodID(intentClass, "<init>", "(Ljava/lang/String;)V");
+    jstring action = env->NewStringUTF("android.intent.action.VIEW");
+    jobject intent = env->NewObject(intentClass, constructor, action);
+    jmethodID setData = env->GetMethodID(intentClass, "setData", "(Landroid/net/Uri;)Landroid/content/Intent;");
+    env->CallObjectMethod(intent, setData, uri);
+    if (packageName) {
+        jmethodID setPackage = env->GetMethodID(intentClass, "setPackage", "(Ljava/lang/String;)Landroid/content/Intent;");
+        jstring package = env->NewStringUTF(packageName);
+        env->CallObjectMethod(intent, setPackage, package);
+        env->DeleteLocalRef(package);
+    }
+    jclass activityClass = env->GetObjectClass(e.app->activity->clazz);
+    jmethodID startActivity = env->GetMethodID(activityClass, "startActivity", "(Landroid/content/Intent;)V");
+    env->CallVoidMethod(e.app->activity->clazz, startActivity, intent);
+    const bool success = !env->ExceptionCheck();
+    clear_jni_exception(env);
+    env->DeleteLocalRef(activityClass);
+    env->DeleteLocalRef(intent);
+    env->DeleteLocalRef(action);
+    env->DeleteLocalRef(intentClass);
+    env->DeleteLocalRef(uri);
+    env->DeleteLocalRef(urlText);
+    env->DeleteLocalRef(uriClass);
+    return success;
+}
+
+void execute_command(Engine& e, jarvis::Command command, const std::string& contactQuery = {}, const std::string& youtubeQuery = {}) {
     switch (command) {
         case jarvis::Command::OpenWhatsAppContact:
             open_whatsapp_contact(e, contactQuery);
@@ -1267,6 +1318,16 @@ void execute_command(Engine& e, jarvis::Command command, const std::string& cont
             launch_package(e, "com.google.android.youtube");
             speak_hindi_async(e, "यूट्यूब खोल रहा हूँ।");
             break;
+        case jarvis::Command::SearchYouTube: {
+            const std::string query = youtubeQuery.empty() ? "trending videos" : youtubeQuery;
+            const std::string url = "https://www.youtube.com/results?search_query=" + encode_url_query(query);
+            if (!open_external_url(e, url, "com.google.android.youtube")) {
+                if (!open_external_url(e, url)) launch_package(e, "com.google.android.youtube");
+            }
+            set_status(e, "YOUTUBE SEARCH: " + query);
+            speak_hindi_async(e, "यूट्यूब पर " + query + " खोज रहा हूँ।");
+            break;
+        }
         case jarvis::Command::VolumeUp:
             change_volume(e, true);
             speak_hindi_async(e, "आवाज़ बढ़ा दी है।");
