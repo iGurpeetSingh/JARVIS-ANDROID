@@ -62,13 +62,17 @@ jobs:
         shell: bash
         run: |
           while IFS= read -r source; do
-            if [ "$source" != "app/src/main/java/com/jarvis/assistant/JarvisVoiceService.java" ]; then
-              echo "Unexpected Java/Kotlin app source: $source"
-              exit 1
-            fi
+            case "$source" in
+              app/src/main/java/com/jarvis/assistant/JarvisVoiceService.java|app/src/main/java/com/jarvis/assistant/NativePermissionBridge.java)
+                ;;
+              *)
+                echo "Unexpected Java/Kotlin app source: $source"
+                exit 1
+                ;;
+            esac
           done < <(find app/src/main -type f \( -name '*.kt' -o -name '*.java' \))
           if find app/src/main -type f -name '*.kt' | grep -q .; then
-            echo "Kotlin sources are not allowed; only the Android service bridge may use Java."
+            echo "Kotlin sources are not allowed; only the Android service and permission bridges may use Java."
             exit 1
           fi
           if grep -R -nE 'org\.jetbrains\.kotlin|kotlin-android|composeOptions|androidx\.compose' --include='*.gradle' --include='*.gradle.kts' .; then
