@@ -887,7 +887,16 @@ bool download_model_file(Engine& e, const std::string& url, const std::string& p
     if (success) success = verify_model_sha256(env, path, expectedSha256);
     vm->DetachCurrentThread();
 
-    if (!success) std::remove(path.c_str());
+    if (success) {
+        std::ofstream marker(path + ".sha256", std::ios::binary | std::ios::trunc);
+        marker << expectedSha256 << "\n";
+        marker.flush();
+        success = marker.good();
+    }
+    if (!success) {
+        std::remove(path.c_str());
+        std::remove((path + ".sha256").c_str());
+    }
     return success;
 }
 
