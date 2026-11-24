@@ -54,7 +54,7 @@ cp "$ENCODER" "$ROOT/app/src/main/assets/sherpa-whisper-tiny/encoder.int8.onnx"
 cp "$DECODER" "$ROOT/app/src/main/assets/sherpa-whisper-tiny/decoder.int8.onnx"
 cp "$TOKENS" "$ROOT/app/src/main/assets/sherpa-whisper-tiny/tokens.txt"
 
-echo "[JARVIS] Downloading streaming keyword-spotting model for the Jarvis wake phrase"
+echo "[JARVIS] Downloading streaming keyword-spotting model for the GURI wake phrase"
 KWS_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01-mobile.tar.bz2"
 curl --fail --location --retry 3 "$KWS_URL" -o "$TMP_DIR/jarvis-kws-mobile.tar.bz2"
 mkdir -p "$TMP_DIR/jarvis-kws"
@@ -87,12 +87,12 @@ import sys
 from sherpa_onnx import text2token
 
 tokens_path, bpe_path, output_path = sys.argv[1:4]
-phrases = ["JARVIS", "HEY JARVIS"]
+phrases = ["GURI", "HEY GURI"]
 encoded = text2token(phrases, tokens_path, tokens_type="bpe", bpe_model=bpe_path)
 with open(output_path, "w", encoding="utf-8") as output:
     for phrase, pieces in zip(phrases, encoded):
         output.write(" ".join(pieces) + " :2.0 #0.25 @" + phrase + "\n")
-print("Generated wake phrases:", phrases)
+print("Generated GURI wake phrases:", phrases)
 PY
 
 echo "[JARVIS] Downloading Hindi male Piper voice (Rohan, int8)"
