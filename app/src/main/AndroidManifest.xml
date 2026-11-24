@@ -30,7 +30,7 @@
             android:stopWithTask="true" />
 
         <activity
-            android:name="android.app.NativeActivity"
+            android:name=".GuriNativeActivity"
             android:configChanges="orientation|keyboardHidden|screenSize"
             android:exported="true"
             android:label="G U R I">
