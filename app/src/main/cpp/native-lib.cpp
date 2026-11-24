@@ -81,9 +81,41 @@ std::string extract_contact_query(const std::string& raw) {
     return candidate;
 }
 
+
+std::string extract_youtube_query(const std::string& raw) {
+    const std::string text = lower_ascii(raw);
+    const std::initializer_list<const char*> markers = {
+        "search youtube for ", "search on youtube for ",
+        "youtube search for ", "youtube par search karo ",
+        "यूट्यूब पर खोजो ", "यूट्यूब पर सर्च करो ",
+        "यूट्यूब में खोजो ", "यूट्यूब पर ढूंढो "
+    };
+    size_t start = std::string::npos;
+    size_t length = 0;
+    for (const char* marker : markers) {
+        const size_t pos = text.find(marker);
+        if (pos != std::string::npos && (start == std::string::npos || pos < start)) {
+            start = pos;
+            length = std::char_traits<char>::length(marker);
+        }
+    }
+    if (start == std::string::npos) return {};
+    std::string query = raw.substr(start + length);
+    const std::string lowerQuery = lower_ascii(query);
+    for (const char* ending : {" on youtube", " in youtube", " please", " प्लीज"}) {
+        const size_t pos = lowerQuery.find(ending);
+        if (pos != std::string::npos) query.resize(std::min(query.size(), pos));
+    }
+    while (!query.empty() && std::isspace(static_cast<unsigned char>(query.back()))) query.pop_back();
+    while (!query.empty() && std::isspace(static_cast<unsigned char>(query.front()))) query.erase(query.begin());
+    if (query.size() > 160) query.resize(160);
+    return query;
+}
+
 Command classify_command(const std::string& raw) {
     const std::string text = lower_ascii(raw);
     if (!extract_contact_query(raw).empty()) return Command::OpenWhatsAppContact;
+    if (!extract_youtube_query(raw).empty()) return Command::SearchYouTube;
 
     if (contains_any(text, {"volume up", "increase volume", "turn up volume", "volume badhao",
                             "awaz badhao", "आवाज बढ़", "वॉल्यूम बढ़", "आवाज़ बढ़",
