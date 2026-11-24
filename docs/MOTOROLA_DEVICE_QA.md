@@ -50,6 +50,7 @@ Use this checklist on the actual target Motorola Android phone. Do not mark any 
 | GURI-033 | Mic button stays in GURI | With RECORD_AUDIO already granted, open the dashboard and tap the central microphone button once | GURI stays in the foreground dashboard; listening status updates; no return to Home, previous app or Android Settings |
 | GURI-034 | First-use mic permission return | Revoke RECORD_AUDIO in Android app settings, reopen GURI and follow the system microphone permission prompt | After Allow, GURI returns to its own dashboard and starts the listener without requiring an app relaunch |
 | GURI-035 | Mic button without overlay permission | Keep "Display over other apps" disabled, open GURI and tap the microphone button | Microphone permission/listening works independently; no automatic Overlay Settings screen is opened |
+| GURI-036 | Repeated mic tap stability | With microphone permission granted, tap the central mic control 10 times, waiting for the status after each tap | App remains in GURI; capture starts/stops without crash, duplicate stream or unexpected navigation |
 
 ## Evidence to capture
 
@@ -57,7 +58,7 @@ Use this checklist on the actual target Motorola Android phone. Do not mark any 
 - APK version, Git commit SHA and GitHub Actions run URL.
 - Pass/fail for every test ID, with a short failure note.
 - Screen recording or screenshot for UI/permission/confirmation cases.
-- Logcat output filtered by GURI_NATIVE and GURI_PERMISSION for native and permission-flow diagnostics.
+- Logcat output filtered by GURI_NATIVE, GURI_PERMISSION and GURI_ACTIVITY for native input, Android permission and Activity lifecycle diagnostics.
 - Available RAM and free storage before Qwen load/download.
 - Model SHA-256 verification result.
 
