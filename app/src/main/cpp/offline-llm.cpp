@@ -170,6 +170,20 @@ std::string offline_llm_generate(const std::string& modelPath,
     const size_t end = response.find_last_not_of(" \t\r\n");
     response = response.substr(begin, end - begin + 1);
 
+    // Never send internal reasoning markers to the speaker.
+    const size_t thinkStart = response.find("<think>");
+    if (thinkStart != std::string::npos) {
+        const size_t thinkEnd = response.find("</think>", thinkStart);
+        if (thinkEnd != std::string::npos) response.erase(thinkStart, thinkEnd + 8 - thinkStart);
+        else response.erase(thinkStart);
+    }
+    const size_t analysisMarker = response.find("<|channel|>analysis");
+    if (analysisMarker != std::string::npos) response.erase(analysisMarker);
+    const size_t cleanBegin = response.find_first_not_of(" \t\r\n");
+    if (cleanBegin == std::string::npos) return {};
+    const size_t cleanEnd = response.find_last_not_of(" \t\r\n");
+    response = response.substr(cleanBegin, cleanEnd - cleanBegin + 1);
+
     g_history.emplace_back(safeQuestion, response);
     while (g_history.size() > 4) g_history.pop_front();
 
